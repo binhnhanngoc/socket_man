@@ -18,7 +18,7 @@ describe("App boots through the mock transport", () => {
   it("renders the core workbench chrome without crashing", () => {
     render(<App />);
     // Brand + the three panes that prove the tree mounted.
-    expect(screen.getByText("Atomiton")).toBeInTheDocument();
+    expect(screen.getByText("SocketMan")).toBeInTheDocument();
     expect(screen.getByText("Collections")).toBeInTheDocument();
     expect(screen.getByText("Compose message")).toBeInTheDocument();
     // Default WS item is selected; its connect button is present.

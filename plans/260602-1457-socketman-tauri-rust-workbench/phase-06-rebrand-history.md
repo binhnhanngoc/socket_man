@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "Rebrand & History"
-status: pending
+status: done
 priority: P2
 effort: "1-2d"
 dependencies: [5]

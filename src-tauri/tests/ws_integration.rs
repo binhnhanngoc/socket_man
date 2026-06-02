@@ -20,7 +20,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_hdr_async, client_async};
 
 use socketman_lib::ws::cancel::Cancel;
-use socketman_lib::ws::connection::{run_connection, RunEnd, RunParams};
+use socketman_lib::ws::connection::{run_connection, Outbound, RunEnd, RunParams};
 use socketman_lib::ws::manager::WsManager;
 use socketman_lib::ws::request::build_request;
 use socketman_lib::ws::types::{ChannelMsg, ConnectConfig, Frame, ReconnectConfig};
@@ -163,7 +163,10 @@ async fn ws_connect_sends_authorization_and_echoes_with_status_flow() {
 
     // Wait for the connection to establish, then round-trip a message.
     sleep(Duration::from_millis(150)).await;
-    manager.send(&conn_id, "{\"action\":\"subscribe\",\"channel\":\"boiler.3\"}".into()).await.unwrap();
+    {
+        let s: String = "{\"action\":\"subscribe\",\"channel\":\"boiler.3\"}".into();
+        manager.send(&conn_id, s.clone(), s).await.unwrap();
+    }
     sleep(Duration::from_millis(200)).await;
 
     // (a) server received the custom Authorization header on the upgrade.
@@ -231,17 +234,38 @@ async fn secret_token_never_appears_in_emitted_messages() {
 }
 
 #[tokio::test]
+async fn url_secret_value_never_appears_in_connect_error() {
+    // A secret resolved into the URL (Phase 5) must be scrubbed from any connect-error
+    // reason, even if a lower layer embeds the URI. The command sets cfg.redact to the
+    // resolved secret values; the supervisor's scrub masks them.
+    let secret = "url-secret-zzz-99";
+    let (log, sink) = collector();
+    let manager = WsManager::default();
+    let mut cfg = cfg_no_reconnect(format!("ws://127.0.0.1:1/{secret}"), &[]);
+    cfg.redact = vec![secret.to_string()];
+    let _ = manager.connect(cfg, sink).await.unwrap();
+    for _ in 0..40 {
+        if statuses(&log).contains(&"disconnected".to_string()) {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    let serialized = serde_json::to_string(&*log.lock().unwrap()).unwrap();
+    assert!(!serialized.contains(secret), "URL secret leaked into connect error: {serialized}");
+}
+
+#[tokio::test]
 async fn queued_send_survives_socket_swap_with_stable_conn_id() {
     // Proves the hoisted (tx, rx): a send buffered while "disconnected" is delivered
     // after a "reconnect" because rx outlives the connection task. connId is the same
     // string across both rounds (we own it here, the manager reuses it across reconnect).
     let conn_id = "42"; // stable across both rounds
-    let (tx, mut rx) = mpsc::channel::<Message>(16);
+    let (tx, mut rx) = mpsc::channel::<Outbound>(16);
 
     // Round 1: server echoes once then closes → run_connection returns.
     let url1 = spawn_echo_once_server().await;
     let ws1 = connect_plain(&url1, &[]).await;
-    tx.send(Message::Text("{\"n\":1}".into())).await.unwrap();
+    tx.send(Outbound::plain(Message::Text("{\"n\":1}".into()))).await.unwrap();
     let log1 = Arc::new(Mutex::new(Vec::new()));
     let log1c = log1.clone();
     let mut sink1 = move |m| log1c.lock().unwrap().push(m);
@@ -250,7 +274,7 @@ async fn queued_send_survives_socket_swap_with_stable_conn_id() {
     assert_eq!(conn_id, "42");
 
     // Between rounds (socket down): queue a send. It buffers in rx, NOT lost.
-    tx.send(Message::Text("{\"n\":2}".into())).await.unwrap();
+    tx.send(Outbound::plain(Message::Text("{\"n\":2}".into()))).await.unwrap();
 
     // Round 2: fresh socket, SAME rx. The queued n:2 must be delivered + echoed.
     let url2 = spawn_echo_once_server().await;
@@ -289,8 +313,8 @@ async fn single_task_select_runs_over_wss_with_custom_header() {
     let tls_stream = tls::tls_client_connect(addr, &server_cert.cert_der).await;
     let (ws, _resp) = client_async(request, tls_stream).await.unwrap();
 
-    let (tx, mut rx) = mpsc::channel::<Message>(16);
-    tx.send(Message::Text("{\"hello\":\"tls\"}".into())).await.unwrap();
+    let (tx, mut rx) = mpsc::channel::<Outbound>(16);
+    tx.send(Outbound::plain(Message::Text("{\"hello\":\"tls\"}".into()))).await.unwrap();
     // Keep tx alive: the echo-once server closes the socket after echoing, which ends
     // the loop deterministically (no race between the echo and a graceful close).
     let _tx = tx;
@@ -456,7 +480,10 @@ async fn reconnect_after_drop_reuses_conn_and_send_path() {
     assert!(accepts.load(Ordering::SeqCst) >= 2, "server should have accepted a reconnect");
 
     // The SAME connId still drives the send path after the reconnect.
-    manager.send(&conn_id, "{\"action\":\"ping\",\"v\":7}".into()).await.unwrap();
+    {
+        let s: String = "{\"action\":\"ping\",\"v\":7}".into();
+        manager.send(&conn_id, s.clone(), s).await.unwrap();
+    }
     sleep(Duration::from_millis(250)).await;
     assert!(
         in_frames(&log).iter().any(|f| matches!(f.dir, socketman_lib::ws::types::FrameDir::In) && f.body["v"] == 7),
@@ -470,7 +497,7 @@ async fn reconnect_after_drop_reuses_conn_and_send_path() {
 async fn heartbeat_reports_rtt() {
     let url = spawn_ping_aware_server().await;
     let ws = connect_plain(&url, &[]).await;
-    let (tx, mut rx) = mpsc::channel::<Message>(16);
+    let (tx, mut rx) = mpsc::channel::<Outbound>(16);
     let _tx = tx; // keep the sender alive so rx never closes during the probe
 
     let (log, _sink) = collector();
@@ -504,7 +531,7 @@ async fn heartbeat_reports_rtt() {
 async fn dead_socket_missed_pong_drops_for_reconnect() {
     let url = spawn_silent_server().await;
     let ws = connect_plain(&url, &[]).await;
-    let (tx, mut rx) = mpsc::channel::<Message>(16);
+    let (tx, mut rx) = mpsc::channel::<Outbound>(16);
     let _tx = tx;
 
     let (_log, _sink) = collector();

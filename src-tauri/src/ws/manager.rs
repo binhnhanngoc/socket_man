@@ -14,9 +14,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
-use tokio_tungstenite::tungstenite::Message;
 
 use super::cancel::Cancel;
+use super::connection::Outbound;
 use super::reconnect::supervise;
 use super::request::build_request;
 use super::types::{ChannelMsg, ConnId, ConnectConfig};
@@ -25,7 +25,7 @@ use crate::error::AppError;
 const SEND_BUFFER: usize = 256;
 
 struct ConnHandle {
-    tx: mpsc::Sender<Message>,
+    tx: mpsc::Sender<Outbound>,
     cancel: Cancel,
 }
 
@@ -48,7 +48,7 @@ impl WsManager {
         build_request(&cfg)?;
 
         let conn_id = (self.next_id.fetch_add(1, Ordering::Relaxed) + 1).to_string();
-        let (tx, rx) = mpsc::channel::<Message>(SEND_BUFFER);
+        let (tx, rx) = mpsc::channel::<Outbound>(SEND_BUFFER);
         let cancel = Cancel::new();
         self.conns.lock().await.insert(conn_id.clone(), ConnHandle { tx, cancel: cancel.clone() });
 
@@ -63,10 +63,13 @@ impl WsManager {
         Ok(conn_id)
     }
 
-    pub async fn send(&self, conn_id: &str, payload: String) -> Result<(), AppError> {
+    /// Queue a text send. `wire` is what goes on the socket (secret-resolved); `log`
+    /// is the template recorded in the out-frame (so secrets never reach the log).
+    /// For sends with no secrets, pass the same string for both.
+    pub async fn send(&self, conn_id: &str, wire: String, log: String) -> Result<(), AppError> {
         let conns = self.conns.lock().await;
         let handle = conns.get(conn_id).ok_or(AppError::UnknownConn)?;
-        handle.tx.send(Message::Text(payload.into())).await.map_err(|e| AppError::Send(e.to_string()))
+        handle.tx.send(Outbound::text(wire, log)).await.map_err(|e| AppError::Send(e.to_string()))
     }
 
     /// Explicit disconnect: cancel the token so the supervisor tears down instantly

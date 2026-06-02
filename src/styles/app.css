@@ -1,4 +1,4 @@
-/* app.css — Relay workbench. Built on Atomiton tokens (colors_and_type.css). */
+/* app.css — SocketMan workbench. Built on the design tokens (colors_and_type.css). */
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }

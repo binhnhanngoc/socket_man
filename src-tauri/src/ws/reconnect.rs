@@ -17,11 +17,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tokio_tungstenite::tungstenite::Message;
 
 use super::backoff::ExponentialBackoff;
 use super::cancel::Cancel;
-use super::connection::{run_connection, status_connected, RunEnd, RunParams};
+use super::connection::{run_connection, status_connected, Outbound, RunEnd, RunParams};
 use super::tls::connect_ws;
 use super::types::{is_sensitive_header, ChannelMsg, ConnId, ConnStatus, ConnStatusKind, ConnectConfig};
 
@@ -33,7 +32,7 @@ const COALESCE: Duration = Duration::from_millis(80);
 /// `Channel` in production, a Vec collector in tests).
 pub async fn supervise<E>(
     cfg: ConnectConfig,
-    mut rx: mpsc::Receiver<Message>,
+    mut rx: mpsc::Receiver<Outbound>,
     emit: E,
     conn_id: ConnId,
     cancel: Cancel,
@@ -140,11 +139,18 @@ fn jitter_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Scrub any secret header VALUE out of an outbound message so a token can never ride
-/// an error/reason string back to the webview, even if some lower layer echoed it.
+/// Scrub any secret VALUE out of an outbound message so a token can never ride an
+/// error/reason string back to the webview, even if some lower layer (e.g. a tungstenite
+/// connect error embedding the URI) echoed it. Covers both sensitive header values and
+/// the resolved secret values substituted into the URL/headers (`cfg.redact`).
 fn scrub(mut s: String, cfg: &ConnectConfig) -> String {
     for (name, value) in &cfg.headers {
         if is_sensitive_header(name) && !value.is_empty() {
+            s = s.replace(value.as_str(), "***");
+        }
+    }
+    for value in &cfg.redact {
+        if !value.is_empty() {
             s = s.replace(value.as_str(), "***");
         }
     }

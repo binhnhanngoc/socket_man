@@ -7,7 +7,9 @@ import { useTweaks } from "./hooks/use-tweaks";
 import { useEnvironments } from "./hooks/use-environments";
 import { usePanels } from "./hooks/use-panels";
 import { useWorkspaceStore } from "./hooks/use-workspace-store";
+import { useHistory } from "./hooks/use-history";
 import { TopNav } from "./components/top-nav";
+import { HistoryPanel } from "./components/history-panel";
 import { CollectionsSidebar } from "./components/collections-sidebar";
 import { MessageLibrary } from "./components/message-library";
 import { WsWorkspace } from "./components/ws-workspace";
@@ -26,6 +28,8 @@ export default function App() {
   const store = useWorkspaceStore(env.activeEnv);
   const [now, setNow] = useState(() => Date.now());
   const [tweaksOpen, setTweaksOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const history = useHistory(historyOpen);
 
   // UI-only clock for the elapsed-connection timer.
   useEffect(() => {
@@ -42,6 +46,7 @@ export default function App() {
         dark={t.dark}
         onToggleDark={() => setTweak("dark", !t.dark)}
         onOpenTweaks={() => setTweaksOpen(true)}
+        onOpenHistory={() => setHistoryOpen(true)}
         environments={env.environments}
         activeEnv={env.activeEnv}
         onSwitchEnv={env.switchEnv}
@@ -115,9 +120,24 @@ export default function App() {
             />
           </>
         ) : (
-          item && <HttpWorkspace item={item} />
+          item && <HttpWorkspace key={item.id} item={item} env={env.activeEnv} />
         )}
       </div>
+
+      {historyOpen && (
+        <HistoryPanel
+          entries={history.entries}
+          onReload={(e) => {
+            if (e.itemId) {
+              store.setActiveId(e.itemId);
+              store.setActiveMsgId(null);
+            }
+            setHistoryOpen(false);
+          }}
+          onClear={history.clear}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
 
       {env.editingEnv && env.editEnv && (
         <EnvEditor

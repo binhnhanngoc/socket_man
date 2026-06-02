@@ -35,6 +35,26 @@ use super::types::{ChannelMsg, ConnId, ConnStatus, ConnStatusKind, Frame, FrameD
 // Largest inbound batch flushed in one IPC message (F: bounded buffer).
 const FRAME_BATCH_CAP: usize = 256;
 
+/// One queued outbound message. `message` goes on the wire (secret-resolved, Phase 5);
+/// `log_text` is the TEMPLATE form recorded as the out-frame so the live log never
+/// shows a resolved secret. `None` logs from the message text itself (no secrets).
+pub struct Outbound {
+    pub message: Message,
+    pub log_text: Option<String>,
+}
+
+impl Outbound {
+    /// No secret resolution — log the out-frame straight from the message text.
+    pub fn plain(message: Message) -> Self {
+        Outbound { message, log_text: None }
+    }
+
+    /// Distinct wire (resolved) vs. log (template) text — keeps secrets out of frames.
+    pub fn text(wire: String, log: String) -> Self {
+        Outbound { message: Message::Text(wire.into()), log_text: Some(log) }
+    }
+}
+
 // Process-global frame id sequence — ids are unique across all connections.
 static FRAME_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -110,7 +130,7 @@ pub struct RunParams {
 /// Generic over the stream so the same loop runs over `ws://` and TLS `wss://`.
 pub async fn run_connection<S, E>(
     mut ws: WebSocketStream<S>,
-    rx: &mut mpsc::Receiver<Message>,
+    rx: &mut mpsc::Receiver<Outbound>,
     emit: &mut E,
     params: &RunParams,
 ) -> RunEnd
@@ -179,11 +199,15 @@ where
                 }
             },
             cmd = rx.recv() => match cmd {
-                Some(message) => {
-                    if let Message::Text(t) = &message {
+                Some(out) => {
+                    // Log the out-frame from the TEMPLATE (log_text) when present, so a
+                    // resolved secret on the wire never appears in the frame log.
+                    if let Some(t) = &out.log_text {
+                        batch.push(make_frame(FrameDir::Out, t, "message"));
+                    } else if let Message::Text(t) = &out.message {
                         batch.push(make_frame(FrameDir::Out, t.as_str(), "message"));
                     }
-                    if ws.send(message).await.is_err() {
+                    if ws.send(out.message).await.is_err() {
                         flush_batch(&mut batch, emit);
                         return RunEnd::Dropped(ConnOutcome { reason: Some("send failed".into()), code: None });
                     }

@@ -13,13 +13,15 @@
 // coupling. The independent prefs (tweaks/panels/environments) live in their own
 // thin hooks; the UI-only 1200ms clock stays in App.
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Collection, ConnMap, ConnMeta, ConnMetaMap, ConnState, Environment, MessageMap, SavedMessage } from "../types";
 import type { Frame } from "../transport/transport";
 import { transport } from "../transport";
 import { COLLECTIONS, MESSAGES } from "../data/starter-data";
 import { serialize, parseFmt, type Format } from "../formats/serialize";
 import { resolveEnv } from "../lib/resolve-env";
+import { secretRefsFor } from "../lib/secret-refs";
+import { appendHistory } from "../lib/history-log";
 
 const MAX_FRAMES = 400;
 // Server-initiated tick kinds — these are what "pause stream" suppresses (the
@@ -107,7 +109,7 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
   const [connMeta, setConnMeta] = useState<ConnMetaMap>(boot.current.connMeta);
   const [urls, setUrls] = useState<Record<string, string>>(boot.current.urls);
   const [msgs, setMsgs] = useState<MessageMap>(boot.current.msgs);
-  const [activeId, setActiveId] = useState("ws-live");
+  const [activeId, setActiveId] = useState("ws-echo");
   const [activeMsgId, setActiveMsgId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [fmt, setFmt] = useState<Format>("json");
@@ -119,6 +121,29 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
       return {};
     }
   });
+
+  // Collections live durably in the Rust JSON store. Hydrate from it on mount (the
+  // localStorage seed migrates in on first write), and mirror every change back.
+  const collsHydrated = useRef(false);
+  useEffect(() => {
+    let live = true;
+    transport
+      .storageLoad("collections")
+      .then((d) => {
+        if (live && Array.isArray(d) && d.length) setCollections(d as Collection[]);
+      })
+      .catch(() => {})
+      .finally(() => {
+        collsHydrated.current = true;
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!collsHydrated.current) return;
+    transport.storageSave("collections", collections).catch(() => {});
+  }, [collections]);
 
   // Refs read by transport callbacks (avoid stale closures).
   const connIdMap = useRef<Record<string, string>>({});
@@ -185,6 +210,9 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
         reconnect: { enabled: meta?.reconnect ?? true },
         insecureTls: !!meta?.insecureTls,
       };
+      // Secret tokens in the URL/headers stay literal here ({{token}}) and resolve
+      // Rust-side from the keychain using the active env's secret keys.
+      const secrets = secretRefsFor(envRef.current);
       setConns((p) => ({ ...p, [id]: { ...p[id], status: "connecting" } }));
       transport
         .wsConnect(cfg, (frames) => ingest(id, frames), (s) => {
@@ -203,7 +231,7 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
             const rttMs = s.status === "disconnected" ? undefined : s.rttMs ?? c.rttMs;
             return { ...p, [id]: { ...c, status: s.status, connectedAt, rttMs } };
           });
-        })
+        }, secrets)
         .then((connId) => {
           connIdMap.current[id] = connId;
         });
@@ -213,13 +241,19 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
 
   const disconnect = useCallback((id: string) => {
     const connId = connIdMap.current[id];
-    if (connId) transport.wsDisconnect(connId);
+    if (connId) {
+      transport.wsDisconnect(connId);
+      // Append a session summary in TEMPLATE form (the user-typed url, secret tokens
+      // still literal) — only when there actually was a live connection.
+      const tmplUrl = urls[id] || allItems.find((i) => i.id === id)?.url || "";
+      appendHistory({ kind: "ws", itemId: id, label: tmplUrl, summary: "session ended", payload: { url: tmplUrl } });
+    }
     setConns((p) => (p[id] ? { ...p, [id]: { ...p[id], status: "disconnected", connectedAt: null } } : p));
-  }, []);
+  }, [urls, allItems]);
 
   const sendBody = useCallback((id: string, body: unknown) => {
     const connId = connIdMap.current[id];
-    if (connId) transport.wsSend(connId, serialize(body, "json"));
+    if (connId) transport.wsSend(connId, serialize(body, "json"), secretRefsFor(envRef.current));
   }, []);
 
   // ---- draft / saved messages ----

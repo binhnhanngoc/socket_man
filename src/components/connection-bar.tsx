@@ -4,6 +4,7 @@ import type { Environment, Item } from "../types";
 import type { ConnStatusKind } from "../transport/transport";
 import { fmtDur } from "../lib/util";
 import { resolveEnv } from "../lib/resolve-env";
+import { maskSecretTokens } from "../lib/secret-refs";
 import { IconGlobe2, IconPlug, IconBolt } from "./icons";
 
 interface ConnectionBarProps {
@@ -29,7 +30,7 @@ export function ConnectionBar({ item, status, elapsed, rttMs, insecureTls, onCon
   const hasTokens = TOKEN_RE.test(item.url);
   // Resolve preview with skipSecret so a secret token in a URL is NOT rendered
   // to the DOM — it stays literal ({{token}}) and is resolved Rust-side (F1).
-  const resolved = hasTokens ? resolveEnv(item.url, env, { skipSecret: true }) : null;
+  const resolved = hasTokens ? maskSecretTokens(resolveEnv(item.url, env, { skipSecret: true }), env) : null;
   return (
     <div className="conn-bar">
       <span className={"proto-chip " + item.kind}>{item.kind === "ws" ? "WSS" : item.method}</span>

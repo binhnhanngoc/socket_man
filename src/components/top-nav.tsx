@@ -5,12 +5,13 @@ import { useState } from "react";
 import type { Environment } from "../types";
 import { ENV_COLOR } from "../data/starter-data";
 import { EnvMenu } from "./env-menu";
-import { IconChevron, IconBolt, IconStar, IconSettings } from "./icons";
+import { IconChevron, IconBolt, IconStar, IconSettings, IconClock } from "./icons";
 
 interface TopNavProps {
   dark: boolean;
   onToggleDark: () => void;
   onOpenTweaks: () => void;
+  onOpenHistory: () => void;
   environments: Environment[];
   activeEnv: Environment | null;
   onSwitchEnv: (id: string | null) => void;
@@ -18,15 +19,15 @@ interface TopNavProps {
   onAddEnv: () => void;
 }
 
-export function TopNav({ dark, onToggleDark, onOpenTweaks, environments, activeEnv, onSwitchEnv, onEditEnv, onAddEnv }: TopNavProps) {
+export function TopNav({ dark, onToggleDark, onOpenTweaks, onOpenHistory, environments, activeEnv, onSwitchEnv, onEditEnv, onAddEnv }: TopNavProps) {
   const [menu, setMenu] = useState(false);
   return (
     <header className="topnav">
       <div className="topnav-brand">
         <img src="/assets/logo-mark.svg" width="26" height="26" alt="" />
         <div className="brand-text">
-          <span className="brand-name">Atomiton</span>
-          <span className="brand-product">Relay</span>
+          <span className="brand-name">SocketMan</span>
+          <span className="brand-product">Workbench</span>
         </div>
       </div>
       <div className="topnav-env-wrap">
@@ -56,6 +57,9 @@ export function TopNav({ dark, onToggleDark, onOpenTweaks, environments, activeE
         )}
       </div>
       <div className="topnav-spacer"></div>
+      <button className="icon-btn" title="History" onClick={onOpenHistory}>
+        <IconClock size={16} />
+      </button>
       <button className="icon-btn" title="Toggle theme" onClick={onToggleDark}>
         {dark ? <IconBolt size={16} /> : <IconStar size={16} />}
       </button>

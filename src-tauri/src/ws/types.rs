@@ -60,6 +60,12 @@ pub struct ConnectConfig {
     /// connection — full MITM exposure, not merely "accept self-signed". Default OFF.
     #[serde(default)]
     pub insecure_tls: bool,
+    /// Resolved secret VALUES substituted into `url`/`headers` (Phase 5). NOT part of
+    /// the IPC contract (`skip`) and NOT printed by Debug — the supervisor scrubs these
+    /// out of any emitted error/reason so a URL/header secret can't ride a connect
+    /// failure back to the webview.
+    #[serde(skip)]
+    pub redact: Vec<String>,
 }
 
 impl Default for ConnectConfig {
@@ -70,6 +76,7 @@ impl Default for ConnectConfig {
             heartbeat_secs: 30,
             reconnect: ReconnectConfig::default(),
             insecure_tls: false,
+            redact: Vec::new(),
         }
     }
 }
