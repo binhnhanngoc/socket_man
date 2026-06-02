@@ -1,6 +1,13 @@
 # SocketMan Codebase Summary
 
-**Status:** Phase 1 (UI + mock transport) ✅ complete. Phase 2 (Rust WS engine + IPC) ✅ complete. Phase 3 (reliability: reconnect + heartbeat) pending.
+**Status:** Phases 1–6 ✅ complete. Phase 7 (Windows packaging) ◑ — bundle config + icons + CSP build gate + `deployment-guide.md` done and the release binary compiles; only the MSI/NSIS installer bundle + manual GUI install smoke test remain (one command, `npm run tauri build`, in a stable-network/GUI session).
+
+- **P4 HTTP client:** real `http_send` (reqwest 0.13.4, `rustls` + `rustls-platform-verifier` = Windows cert store, one strict client) → status/headers/body/timing, 16 MiB body cap, URL-stripped error mapping. Frontend `use-http` hook + rebuilt `HttpWorkspace` (request editor / response view split).
+- **P5 Persistence & secrets:** Rust JSON store (`storage/`) with atomic write + per-file mutex + corrupt-tolerant load; OS keychain via **keyring 3** (`secret_set`/`secret_delete` commands; `secret_get` is a PRIVATE fn, never a command); private `resolve_secrets` resolves `{{secret}}` Rust-side on the outbound path with per-context validation (CRLF-in-header rejected, URL components percent-encoded). `Outbound` envelope keeps resolved secrets out of the WS frame log (logs the template). Frontend persists collections/environments to the JSON store (localStorage = migration seed + mock backing); env editor writes secrets to the keychain and strips plaintext.
+- **P6 Rebrand & history:** Atomiton/Relay → SocketMan (only `relay.*` localStorage migration keys remain); neutral starter data (`wss://echo.websocket.events`, `https://postman-echo.com`, placeholder secret); History panel reads/clears the persisted `history.json` (templates only, appended Rust-side).
+- **P7 Packaging:** `tauri.conf.json` bundle metadata (publisher/category/copyright/descriptions, NSIS currentUser), CSP gate wired into `npm run build`, `docs/deployment-guide.md`.
+
+> The detailed sections below predate Phases 3–7 and describe the P1/P2 snapshot — treat the bullets above + `system-architecture.md` as current for transport/secret/persistence contracts.
 
 ## Directory Structure
 

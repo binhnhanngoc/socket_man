@@ -6,7 +6,7 @@
   "description": "SocketMan — Tauri 2 + Rust WebSocket/HTTP workbench",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && node scripts/assert-csp.mjs && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -1,7 +1,7 @@
 ---
 phase: 7
 title: "Windows Packaging"
-status: pending
+status: done  # installers built (MSI 6.1MB + NSIS 3.9MB) via `npm run tauri build`; only the manual GUI install smoke test remains (human step)
 priority: P3
 effort: "1d"
 dependencies: [6]

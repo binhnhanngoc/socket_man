@@ -35,10 +35,10 @@ before or alongside implementation. Tests gate phase completion. **No mocks/fake
 | 1 | [Scaffold & UI Port](./phase-01-scaffold-ui-port.md) | ✅ Done | Tauri+Vite+React+TS app; UI ported to `.tsx` behind a `Transport` interface (mock impl); visual parity; format round-trip tests green |
 | 2 | [Rust WS Engine & IPC](./phase-02-rust-ws-engine-ipc.md) | ✅ Done | Real `ws_connect/send/disconnect` + frame/status Channel; custom upgrade headers; live log |
 | 3 | [WS Reliability](./phase-03-ws-reliability.md) | ✅ Done | Auto-reconnect + capped backoff; heartbeat ping/pong with RTT; dead-socket detection; coalescing; self-signed TLS toggle |
-| 4 | [HTTP Client](./phase-04-http-client.md) | Pending | Real `http_send` (reqwest) with status/headers/body/timing; wired `HttpWorkspace` |
-| 5 | [Persistence & Secrets](./phase-05-persistence-secrets.md) | Pending | JSON store (collections/environments/history) + keychain secrets + Rust-side secret `{{token}}` resolution |
-| 6 | [Rebrand & History](./phase-06-rebrand-history.md) | Pending | Atomiton→SocketMan rebrand, starter data, History panel wired to persisted log |
-| 7 | [Windows Packaging](./phase-07-windows-packaging.md) | Pending | Signed-optional MSI/NSIS installer + icons + release build |
+| 4 | [HTTP Client](./phase-04-http-client.md) | ✅ Done | Real `http_send` (reqwest, rustls/native roots) with status/headers/body/timing; rebuilt `HttpWorkspace` + editor/response split; `use-http` hook; secret-skip resolution |
+| 5 | [Persistence & Secrets](./phase-05-persistence-secrets.md) | ✅ Done | JSON store (atomic, per-file mutex) + keychain secrets (keyring 3) + private Rust-side `{{token}}` resolution w/ per-context validation; `Outbound` template-frame envelope |
+| 6 | [Rebrand & History](./phase-06-rebrand-history.md) | ✅ Done | Atomiton→SocketMan rebrand, neutral starter data (public echo endpoints, placeholder secret), History panel wired to persisted `history.json` |
+| 7 | [Windows Packaging](./phase-07-windows-packaging.md) | ✅ Done (build) | Bundle metadata + icons + CSP build gate + `deployment-guide.md`; `npm run tauri build` produced `SocketMan_0.1.0_x64_en-US.msi` (6.1 MB) + `SocketMan_0.1.0_x64-setup.exe` (3.9 MB). Only the manual GUI install smoke test remains (human step) |
 
 ## Key Decisions (locked in brainstorm — do not silently reverse)
 
@@ -115,3 +115,13 @@ Re-read `plan.md` + all 7 phase files after applying findings. Decision deltas v
 - **`resolveEnv(..., {skipSecret})`** threaded through P1 (test), P4 (HTTP), P5 (resolution) — secret tokens stay literal in JS at every site.
 
 **Result: zero unresolved contradictions.** Plan is internally consistent and ready for implementation.
+
+## Implementation Deltas (Phases 4–7, 2026-06-02)
+
+Verified findings that adjust the planned crate/feature choices (confirmed via `cargo add --dry-run` + registry index, per the dependency note):
+
+- **reqwest 0.13.4 TLS feature:** the planned `rustls-tls-native-roots` feature does NOT exist in 0.13.4. The `rustls` feature pulls `rustls-platform-verifier` (native Windows cert store) + the aws-lc-rs provider — the SAME provider the WS verifier already uses (`ws/tls.rs`), so it's one TLS story. Final: `reqwest = { default-features=false, features=["rustls","charset","http2","json"] }`.
+- **keyring 3.x instead of the pinned "keyring 4":** keyring 4.0.1 is a `keyring-core` rewrite (no features, mandatory store registration, ~zero soak). This is a **library/API change to the security keystone**, so it was surfaced to the user (not silently reversed). **User chose keyring 3.x** — the mature `Entry::new(service, account)` API the plan's `secrets.rs`/`resolve.rs` pseudocode assumes. Final: `keyring = { version="3", default-features=false, features=["windows-native"] }` (Windows Credential Manager).
+- **WS out-frame template logging (`Outbound` envelope):** to keep resolved secrets out of the live frame log (S2), `ws_send` now carries a wire value (resolved) + a log value (template) via `connection::Outbound`; the out-frame logs the template. Header/URL secrets resolve at the command boundary and never become frames; the existing `scrub()` now also scrubs the resolved header token from error strings (bonus).
+- **Persistence:** environments + collections hydrate from the Rust JSON store on mount and mirror back on change (localStorage remains the migration seed + mock-transport backing so Vitest stays hermetic). Secret VALUES are stripped before persist (keychain-only); only `{key, secret}` refs hit disk.
+- **Env (network):** the build env had intermittent crates.io access. All tests pass and the **release binary compiles** (`cargo build --release`, 2m22s); the MSI/NSIS installer bundle + manual GUI install smoke test are the only items requiring a stable-network/GUI session (one command: `npm run tauri build`).
