@@ -1,6 +1,6 @@
 # SocketMan System Architecture
 
-**Overview:** A Tauri 2 desktop app bridging React/TypeScript UI with a Rust transport backend. Phase 1 (mock transport) and Phase 2 (real WS engine + IPC) complete; HTTP client lands Phase 4.
+**Overview:** A Tauri 2 desktop app bridging a React/TypeScript UI with a Rust transport backend — a WebSocket/HTTP workbench. All seven build phases are complete: mock transport, real WS engine + IPC, WS reliability (auto-reconnect/heartbeat/RTT/TLS toggle), HTTP client, JSON persistence + OS-keychain secrets, SocketMan rebrand + history, and Windows packaging. A WebDriver e2e harness exercises the real WebView2↔Rust bridge. The only open acceptance item is a manual GUI install smoke test (cannot run headlessly).
 
 ## Layered Architecture
 
@@ -17,22 +17,24 @@
 ┌──────────────────────────┴──────────────────────────────────────┐
 │              Transport Abstraction (src/transport/)              │
 │  ┌──────────────────────┐  or  ┌──────────────────────────────┐ │
-│  │  Mock Transport      │      │ Tauri IPC Bridge (Phase 2+)  │ │
-│  │  (Phase 1)           │      │  (ws_* + http_send commands) │ │
+│  │  Mock Transport      │      │ Tauri IPC Bridge (real)      │ │
+│  │  (browser/test fb)   │      │  (ws_*/http_send/storage_*)  │ │
 │  └──────────────────────┘      └──────────────────────────────┘ │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ Tauri Commands / IPC
-                           │ (Phase 2+ only)
+                           │ (real transport in the WebView2 app)
 ┌──────────────────────────┴──────────────────────────────────────┐
 │              Rust Backend (src-tauri/src/)                       │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  WS Engine (tokio-tungstenite, custom headers)          │   │
-│  │  HTTP Client (reqwest)                                   │   │
-│  │  Reliability (auto-reconnect, heartbeat, RTT)           │   │
-│  │  Persistence (JSON store, OS keychain secrets)          │   │
+│  │  Reliability (auto-reconnect, heartbeat, RTT, TLS mode) │   │
+│  │  HTTP Client (reqwest, rustls native roots)             │   │
+│  │  Persistence (JSON store) + OS keychain secrets          │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+The mock transport is now only a fallback for `vite dev` in a plain browser and for Vitest/jsdom; the real Tauri transport runs in the packaged WebView2 app.
 
 ## Data Flow: WebSocket Connection
 
@@ -89,20 +91,28 @@ Output: "Bearer {{token}}"  ← secret token left literal, never resolved
 - Connection log/history (Phase 5 shows templates, never resolved values)
 - Settings panels (display `{{token}}` literal in headers preview)
 
-### In Rust (Secret Get + Substitute)
+### In Rust (Secret Get + Substitute) — Implemented
 
-**Phase 5 only** (not yet built):
+The outbound commands (`ws_connect`, `ws_send`, `http_send`) take `env_id` + `secret_keys`
+and resolve `{{secretKey}}` tokens Rust-side, right on the way out (`storage/resolve.rs`):
 
 ```
-1. ws_connect command receives { url, headers: { "Authorization": "Bearer {{token}}" } }
-2. Rust resolves {{token}} by calling secret_get("token") → OS keychain
-3. Rust substitutes resolved value into header
-4. Rust sends WS upgrade with actual token
-5. Frame logged in Rust contains the **template** "Bearer {{token}}", not resolved value
-6. When history shown to user, JS renders the template (no secrets in JS heap)
+1. ws_connect receives { config: { url, headers }, env_id, secret_keys }
+2. Rust resolves {{token}} via the PRIVATE storage::secrets::get → OS keychain
+3. Rust substitutes resolved values into the URL + header values, with per-context
+   validation: CRLF rejected in headers, URL components percent-encoded
+4. Rust sends the WS upgrade / HTTP request with actual secret values
+5. The frame/history log keeps the **template** "Bearer {{token}}" (the `Outbound`
+   envelope carries wire-vs-template separately); resolved secrets never get logged
+6. Resolved secret values are also collected into ConnectConfig.redact (#[serde(skip)])
+   so the supervisor scrubs them from any connect-error/reason string
 ```
 
-**Security guarantee:** `secret_get` is NEVER registered as a Tauri command — it is a private Rust function. The webview cannot call it directly.
+**Security guarantees:**
+- `secret_get` is NEVER registered as a Tauri command — resolution uses the private
+  `storage::secrets::get`. The webview cannot read secrets back.
+- Non-secret vars are resolved frontend-side; only secret tokens cross to Rust as keys.
+- A secret resolved into a URL (not just a header) is also scrubbed from error strings.
 
 ## State Architecture
 
@@ -136,32 +146,34 @@ Output: "Bearer {{token}}"  ← secret token left literal, never resolved
 - **`use-panels`** — sidebar/library widths, collapse, density (no persistence)
 - **`use-tweaks`** — dark/accent/density, **persists to localStorage** (survive reload)
 
-## Persistence Model
+## Persistence Model (Implemented)
 
-### Phase 1 (Current)
+- **Collections/environments:** JSON files in the Tauri `app_data_dir`
+  (`%APPDATA%/com.socketman.app/collections.json`, `environments.json`) via the Rust
+  `storage/` module — atomic write (unique-tmp + fsync + rename), per-file async mutex,
+  corrupt-tolerant load. localStorage (`relay.*` keys) survives only as a migration seed
+  and as the mock-transport backing for browser dev.
+- **Secrets:** OS keychain via the `keyring` 3.x crate (Windows → Credential Manager),
+  service `SocketMan`. `secret_set`/`secret_delete` are commands; reads are the private
+  `storage::secrets::get`. Plaintext secret values never touch disk; the env editor
+  writes the value to the keychain and strips it from the persisted JSON.
+- **History:** Rust-side append log (`history.json`) of TEMPLATE-form entries only,
+  capped + serialized in `storage/history.rs`; read/cleared by the History panel.
+- **Connections:** transient in-memory (not persisted).
+- **Prefs:** localStorage (`relay.tweaks` — dark/accent/density).
 
-- **Collections/messages/URLs:** localStorage (key `relay.collections`, `relay.msgCollNames`, migrations from old keys)
-- **Prefs:** localStorage (`relay.tweaks` — dark/accent/density)
-- **Connections:** transient in-memory (not persisted)
-- **Secrets:** not yet (no OS keychain integration)
-
-### Phase 5+ (Planned)
-
-- **Collections/messages/envs:** JSON files in `%APPDATA%/SocketMan/` (SQLite optional)
-- **Secrets:** OS keychain (`keyring` crate on Windows → Credential Manager)
-- **Prefs:** localStorage (no change)
-- **History:** Rust-side append log (never loaded into JS state)
-
-## Transport Contract (TypeScript ↔ Rust) — Phase 2 Implemented
+## Transport Contract (TypeScript ↔ Rust) — Implemented
 
 ### WebSocket
 
 **Command: `ws_connect`** (JS → Tauri):
 ```ts
 ws_connect(
-  config: ConnectConfig,  // { url: string, headers: Record<string, string> }
+  config: ConnectConfig,  // { url, headers, heartbeatSecs?, reconnect?, insecureTls? }
+  env_id?: string,        // active env — Rust resolves {{secret}} in url/headers
+  secret_keys?: string[], // which env vars are secret
   channel: ipc::Channel<ChannelMsg>  // Receiver for async frame/status/error emission
-) -> Promise<connId: string>  // Unique ID for this connection
+) -> Promise<connId: string>  // Unique ID for this connection (stable across reconnects)
 ```
 
 **ChannelMsg stream** (Rust → JS, via `ipc::Channel.onmessage`):
@@ -193,17 +205,21 @@ ws_disconnect(connId: string) -> Promise<void>
 ws_send(connId: string, payload: string) -> Promise<void>
 ```
 
-**Security:** Headers contain `Authorization: Bearer {{token}}` literals; Rust substitutes real values Phase 5 (via secret_get, never exposed as a Tauri command).
+**Security:** Headers/URL may contain `{{token}}` secret literals; Rust substitutes real
+values on the outbound path via the private `storage::secrets::get` (never a Tauri command),
+and records the template form in the frame/history log.
+
+**Also: `ws_send`** carries `env_id`/`secret_keys` too — the wire payload is secret-resolved
+while the logged out-frame keeps the template.
 
 ### HTTP
 
 **Outbound** (JS → Tauri):
 ```ts
 http_send(
-  method: string,
-  url: string,
-  headers: Record<string, string>,
-  body?: string
+  req: { method, url, headers, body? },
+  env_id?: string,        // active env — lets Rust resolve {{secret}} tokens
+  secret_keys?: string[]  // which env vars are secret (resolved Rust-side)
 ) -> Promise<HttpResponse>
 
 HttpResponse {
@@ -216,25 +232,43 @@ HttpResponse {
 }
 ```
 
-## Phase Roadmap
+## Phase Roadmap (all complete)
 
 | Phase | Deliverable | Status | Key Changes |
 |-------|-------------|--------|------------|
 | 1 | UI ported, mock transport | ✅ Done | React/TS scaffold, format gates (JSON gated), secret-skip resolver, mock server |
 | 2 | Real Rust WS engine + IPC | ✅ Done | tokio-tungstenite, custom upgrade headers, ipc::Channel streaming, ChannelMsg enum |
-| 3 | WS reliability | Pending | Auto-reconnect + capped backoff, heartbeat ping/pong, RTT measurement, dead-socket detection |
-| 4 | HTTP client | Pending | reqwest, real http_send command, headers/body/status/timing, wired HttpWorkspace |
-| 5 | Persistence + secrets | Pending | JSON store (collections/envs/history), OS keychain (secret resolution Rust-side), history panel |
-| 6 | Rebrand + history | Pending | SocketMan branding (replace Atomiton), starter data, history panel UI |
-| 7 | Windows packaging | Pending | NSIS/MSI installer, signed optional, icons, release build |
+| 3 | WS reliability | ✅ Done | Auto-reconnect + capped backoff, heartbeat ping/pong, RTT, dead-socket detection, self-signed TLS toggle |
+| 4 | HTTP client | ✅ Done | reqwest (rustls native roots), real http_send, headers/body/status/timing, 16 MiB cap, HttpWorkspace |
+| 5 | Persistence + secrets | ✅ Done | Atomic JSON store (collections/envs/history), OS keychain (keyring 3), Rust-side secret resolution |
+| 6 | Rebrand + history | ✅ Done | Atomiton/Relay → SocketMan, neutral starter data, History panel over history.json |
+| 7 | Windows packaging | ✅ Done* | NSIS + MSI installers, CSP build gate, icons, release build, deployment guide |
 
-## Reliability & Backoff (Phase 3+, Not Yet Built)
+\* Phase 7 code/build complete; the manual GUI install smoke test on a clean Windows
+session is the one remaining acceptance item (cannot run headlessly). A WebDriver e2e
+harness (`npm run e2e`) was added afterward to cover the real WebView2↔Rust IPC bridge.
 
-**Auto-reconnect strategy:**
-- Exponential backoff: 1s, 2s, 4s, 8s, 16s, ..., capped at 60s (hardcoded, not user-configurable per F18).
-- Single-task select loop: one Tokio task manages connection + reconnect state (single source of truth for connId).
-- Cancel arm: user `disconnect` stops reconnect loop (never auto-reconnect after explicit disconnect).
-- Heartbeat: send ping every 30s (hardcoded). If no pong within 5s, declare socket dead → reconnect.
+## Reliability & Backoff (Implemented)
+
+The connection is supervised by a **single Tokio task** running `select!` over the socket
+read half, the command receiver, the heartbeat tick, the coalesce-flush tick, and a cancel
+signal (`ws/connection.rs`). Keeping both socket halves in one task (no cross-task `.split()`)
+avoids the rustls split read+write deadlock. The manager hoists the `(tx, rx)` channel and
+the stable connId **above** any single socket (`ws/manager.rs`) so queued sends survive a
+reconnect swap.
+
+**Auto-reconnect (`ws/reconnect.rs`, `ws/backoff.rs`):**
+- Capped exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, … (pure deterministic state
+  machine; caller adds jitter). Cap is hardcoded, not user-configurable.
+- On an unexpected drop: emit `reconnecting`, wait the backoff, reconnect on the hoisted
+  channel + stable connId. `reset()` on a successful connect.
+- Cancel arm (`ws/cancel.rs`): explicit user `disconnect` tears down INSTANTLY and never
+  reconnects — whether idle-connected OR mid-backoff (a ~30-line `tokio::sync::Notify`
+  token, since `tokio_util`'s CancellationToken isn't in the offline crate cache).
+
+**Heartbeat (`ws/heartbeat.rs`):** an explicit `awaiting_pong` bit, not a naive timeout —
+on each ping tick, if the previous pong never arrived the socket is declared dead →
+reconnect; otherwise send a ping and set the bit. RTT is measured from the pong.
 
 **Status kinds:**
 - `disconnected` — not connected, not attempting
@@ -242,14 +276,18 @@ HttpResponse {
 - `connected` — open, heartbeat healthy
 - `reconnecting` — backoff delay active, waiting to retry
 
-## TLS & Insecure Mode (Phase 1 UI, Phase 3 Honor)
+## TLS & Insecure Mode (Implemented — `ws/tls.rs`)
 
-**Phase 1:** ConnectConfig carries no TLS fields. UI doesn't show toggle yet.
+Two per-connection modes:
+- **SecureNativeRoots (default):** `connect_async` with the rustls native-roots config
+  (the Windows cert store) — full cert-chain, expiry, and hostname checks.
+- **InsecureNoVerification (opt-in `insecureTls`):** a custom verifier accepting ANY cert
+  and ANY hostname. This is FULL MITM exposure (not merely "accept self-signed") — named
+  honestly because it is a footgun. Default OFF; opt-in per connection with a visible
+  warning. An in-test `wss://` proof exercises both paths.
 
-**Phase 3+:** Optional `insecureTls` boolean in ConnectConfig (defaults false).
-- When `true`: Disables **all** cert + hostname verification (true MITM risk).
-- Warning shown at connect time + persisted as a per-connection flag (not a silent default).
-- Phase 1 keeps it strict (rustls + native-roots = Windows cert store).
+The same rustls/aws-lc-rs + platform-verifier provider backs both the WS verifier and the
+reqwest HTTP client — one TLS story, native roots, no native-tls.
 
 ## Code Quality Gates
 
@@ -265,8 +303,8 @@ HttpResponse {
 - **No Postman import:** Own JSON format only (import deferred if customer request).
 - **No binary WS frames:** Text-only (binary is out of scope).
 - **No SSE/Socket.IO/MQTT:** WS + HTTP only.
-- **No macOS/Linux:** Windows-first (cross-platform Phase 7).
-- **No custom cert pinning:** Phase 3 adds per-connection insecure toggle; pinning deferred.
+- **No macOS/Linux:** Windows-first (keyring uses `windows-native`; packaging is NSIS/MSI). Cross-platform deferred.
+- **No custom cert pinning:** per-connection insecure toggle only; pinning deferred.
 - **YAML/XML lossy:** Single-element arrays collapse, numeric strings coerce. JSON is the lossless format.
 
 ---
@@ -275,24 +313,33 @@ HttpResponse {
 
 ### Adding a New Tauri Command
 
-1. Define the Rust fn in `src-tauri/src/{ws,http}/mod.rs`.
-2. Add `#[tauri::command]` macro.
-3. Append to the `generate_handler![]` list in `lib.rs` (alphabetized).
-4. Update `src/transport/transport.ts` interface.
-5. Update mock (if testing) or skip for integration testing (real Rust).
-6. Invoke via `transport` in React hooks.
+1. Add the thin handler in `src-tauri/src/commands.rs` with `#[tauri::command]` (real work
+   lives in `ws::manager`, `http::client`, or `storage::*`).
+2. Append it to the `generate_handler![]` list in `lib.rs` (alphabetized, one per line).
+3. Update the `Transport` interface in `src/transport/transport.ts`.
+4. Mirror it in `src/transport/tauri-transport.ts` (real) and `mock-transport.ts` (fallback).
+5. Invoke via `transport` in React hooks.
+
+Current registered commands (`lib.rs`): `history_append`, `http_send`, `secret_delete`,
+`secret_set`, `storage_load`, `storage_save`, `ws_connect`, `ws_disconnect`, `ws_send`.
+`secret_get` is deliberately absent.
 
 ### Testing Workflow
 
-- **Unit:** Vitest + `@testing-library/react` for components/hooks.
-- **Format:** Test round-trip serialize/parse (JSON gated, YAML/XML documented lossy).
-- **Integration:** Smoke test App boot through mock/real transport.
-- **E2E:** Manual testing with dev server + real WebSocket (Phase 2+).
+- **Unit:** Vitest + `@testing-library/react` for components/hooks (38 tests).
+- **Format:** Round-trip serialize/parse (JSON gated lossless, YAML/XML documented lossy).
+- **Integration:** App-boot smoke test through the mock transport; Rust integration tests
+  (57 green) cover WS upgrade/echo/reconnect/TLS, HTTP, keychain round-trip, storage no-leak.
+- **E2E (`npm run e2e`):** `tauri-driver` (WebDriver over real WebView2) drives the built
+  release app against a hermetic local echo server (`e2e/`). The only layer that catches
+  JS↔Rust IPC/Channel protocol skew.
 
 ### Security Checklist
 
 - [ ] No secrets hardcoded in React source.
 - [ ] `resolveEnv(..., { skipSecret: true })` used in all send/connect/HTTP paths.
+- [ ] Only secret KEYS (`env_id` + `secret_keys`) cross to Rust; values resolved Rust-side.
 - [ ] `secret_get` never registered as a Tauri command.
-- [ ] Frame/history logs assembled Rust-side (never resolved secrets logged).
-- [ ] CSP tight: `script-src 'self'` with no `unsafe-eval`.
+- [ ] Frame/history logs keep templates (resolved secrets never logged; URL secrets scrubbed
+      from error strings).
+- [ ] CSP tight: `script-src 'self'` with no `unsafe-eval` (gated by `npm run build`).
