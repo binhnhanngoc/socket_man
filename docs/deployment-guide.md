@@ -73,6 +73,21 @@ To sign, set in `tauri.conf.json` → `bundle.windows`:
 Then rebuild. (Leave these unset for unsigned dev builds — the default.) You can also sign
 the artifacts manually after the fact with `signtool sign /fd sha256 /tr <ts-url> ...`.
 
+## Automated end-to-end test (real WebView2)
+
+`npm run e2e` drives the built release app through **tauri-driver** (WebDriver over the
+real WebView2) against a hermetic local WS+HTTP echo server — no external network. It
+asserts: app boots, WS connect + echo round-trip, and an HTTP 200. Prereqs:
+
+- `cargo install tauri-driver` (on PATH).
+- `msedgedriver.exe` matching the installed Edge/WebView2 version, at `.tools/msedgedriver.exe`
+  (or set `MSEDGEDRIVER`). Download from `https://msedgedriver.microsoft.com/<version>/edgedriver_win64.zip`.
+- A release build present (`npm run tauri build`).
+
+> This layer is what catches JS↔Rust IPC/Channel protocol skew — keep the
+> `@tauri-apps/api` / `@tauri-apps/cli` JS packages on the SAME minor as the Rust
+> `tauri` crate (a mismatch silently breaks `ipc::Channel` delivery).
+
 ## Install smoke test (manual, required before release)
 
 A headless build cannot exercise the GUI — run this on a clean Windows session/VM:
