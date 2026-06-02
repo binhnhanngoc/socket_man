@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "HTTP Client"
-status: pending
+status: done
 priority: P2
 effort: "2d"
 dependencies: [1]
