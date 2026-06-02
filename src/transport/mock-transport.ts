@@ -7,6 +7,7 @@ import { byteSize } from "../lib/util";
 import { makeMockServer, type FrameStub, type MockServer } from "./mock-server-simulation";
 import type { Frame, HttpRequest, HttpResponse, Transport } from "./transport";
 
+const STORE_PREFIX = "socketman.store.";
 let FRAME_SEQ = 0;
 let CONN_SEQ = 0;
 const TICK_MS = 1200;
@@ -106,5 +107,44 @@ export const mockTransport: Transport = {
       timingMs: 280 + Math.floor(Math.random() * 80),
       sizeBytes: new Blob([text]).size,
     });
+  },
+
+  // ---- persistence shim (Phase 5): localStorage-backed so tests stay hermetic and
+  // a plain `vite dev` browser session persists too. The real JSON-file + keychain
+  // store lives in the Tauri transport. Secrets are no-ops here (no keychain in a
+  // browser); secret tokens simply stay literal, which is harmless in the mock.
+  storageLoad(name) {
+    try {
+      const s = localStorage.getItem(STORE_PREFIX + name);
+      return Promise.resolve(s ? JSON.parse(s) : null);
+    } catch {
+      return Promise.resolve(null);
+    }
+  },
+  storageSave(name, data) {
+    try {
+      localStorage.setItem(STORE_PREFIX + name, JSON.stringify(data));
+    } catch {
+      // ignore (quota / unavailable)
+    }
+    return Promise.resolve();
+  },
+  secretSet() {
+    return Promise.resolve();
+  },
+  secretDelete() {
+    return Promise.resolve();
+  },
+  historyAppend(entry) {
+    try {
+      const s = localStorage.getItem(STORE_PREFIX + "history");
+      const list: unknown[] = s ? JSON.parse(s) : [];
+      list.unshift(entry);
+      if (list.length > 500) list.length = 500;
+      localStorage.setItem(STORE_PREFIX + "history", JSON.stringify(list));
+    } catch {
+      // ignore
+    }
+    return Promise.resolve();
   },
 };

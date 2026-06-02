@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Environment, EnvVar } from "../types";
 import { ENV_COLOR } from "../data/starter-data";
+import { transport } from "../transport";
 import { IconX, IconCheck, IconLock, IconPlus, IconTrash } from "./icons";
 
 const ENV_SWATCHES = ["leaf", "solar", "pond", "rust", "flare", "clay"];
@@ -36,9 +37,37 @@ export function EnvEditor({ env, isNew, onSave, onDelete, onClose }: EnvEditorPr
   const addVar = () =>
     setVars((vs) => [...vs, { id: "v" + Date.now() + Math.random().toString(36).slice(2, 5), key: "", value: "", secret: false }]);
   const removeVar = (id: string) => setVars((vs) => vs.filter((v) => v.id !== id));
-  const save = () => {
+
+  // Secret values go to the OS keychain (write-only); only a {key, secret} ref is
+  // persisted on disk. Reconcile on save: delete keychain entries for vars no longer
+  // secret/present, write the ones that were (re)typed, then strip plaintext.
+  const save = async () => {
     const cleaned = vars.filter((v) => v.key.trim() || v.value.trim());
-    onSave({ ...env, name: name.trim() || env.name, color, vars: cleaned });
+    const origSecretKeys = env.vars.filter((v) => v.secret && v.key.trim()).map((v) => v.key);
+    const newSecretKeys = new Set(cleaned.filter((v) => v.secret && v.key.trim()).map((v) => v.key));
+
+    for (const k of origSecretKeys) {
+      if (!newSecretKeys.has(k)) {
+        try {
+          await transport.secretDelete(env.id, k);
+        } catch {
+          // best-effort orphan cleanup
+        }
+      }
+    }
+    for (const v of cleaned) {
+      // Empty value on an existing secret = keep the keychain value (write-only field).
+      if (v.secret && v.key.trim() && v.value.trim()) {
+        try {
+          await transport.secretSet(env.id, v.key.trim(), v.value);
+        } catch {
+          // keychain unavailable → the var still saves as a ref; resolve will error clearly
+        }
+      }
+    }
+    // Never persist a secret VALUE to disk — store the ref only.
+    const persistedVars = cleaned.map((v) => (v.secret ? { ...v, value: "" } : v));
+    onSave({ ...env, name: name.trim() || env.name, color, vars: persistedVars });
     onClose();
   };
 
@@ -115,8 +144,9 @@ export function EnvEditor({ env, isNew, onSave, onDelete, onClose }: EnvEditorPr
                 />
                 <input
                   className={"kv-v mono" + (v.secret ? " secret" : "")}
+                  type={v.secret ? "password" : "text"}
                   value={v.value}
-                  placeholder="value"
+                  placeholder={v.secret ? "●●●● stored in keychain" : "value"}
                   spellCheck={false}
                   onChange={(e) => setVar(v.id, { value: e.target.value })}
                 />

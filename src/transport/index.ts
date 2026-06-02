@@ -27,5 +27,6 @@ export type {
   FrameDir,
   HttpRequest,
   HttpResponse,
+  SecretRefs,
   Transport,
 } from "./transport";

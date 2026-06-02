@@ -6,7 +6,13 @@
 // `await channel.onmessage(cb)` snippet is wrong; do not copy it.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ConnStatus, Frame, HttpRequest, HttpResponse, Transport } from "./transport";
+import type { ConnStatus, Frame, HttpRequest, HttpResponse, SecretRefs, Transport } from "./transport";
+
+// Tauri converts camelCase JS arg keys to the snake_case Rust command params
+// (envId → env_id, secretKeys → secret_keys). An absent env sends an empty key list.
+function secretArgs(secrets?: SecretRefs) {
+  return { envId: secrets?.envId, secretKeys: secrets?.secretKeys ?? [] };
+}
 
 // Mirror of the Rust `ChannelMsg` enum (#[serde(tag = "t", rename_all = "camelCase")]).
 type ChannelMsg =
@@ -17,7 +23,7 @@ type ChannelMsg =
 let SYS_SEQ = 0;
 
 export const tauriTransport: Transport = {
-  wsConnect(cfg, onFrame, onStatus) {
+  wsConnect(cfg, onFrame, onStatus, secrets) {
     const channel = new Channel<ChannelMsg>();
     channel.onmessage = (m) => {
       if (m.t === "frames") {
@@ -33,20 +39,36 @@ export const tauriTransport: Transport = {
         ]);
       }
     };
-    return invoke<string>("ws_connect", { config: cfg, channel });
+    return invoke<string>("ws_connect", { config: cfg, channel, ...secretArgs(secrets) });
   },
 
-  wsSend(connId, payload) {
-    return invoke<void>("ws_send", { connId, payload });
+  wsSend(connId, payload, secrets) {
+    return invoke<void>("ws_send", { connId, payload, ...secretArgs(secrets) });
   },
 
   wsDisconnect(connId) {
     return invoke<void>("ws_disconnect", { connId });
   },
 
-  httpSend(_req: HttpRequest): Promise<HttpResponse> {
-    // Real HTTP transport lands in Phase 4 (`http_send` reqwest command). No caller
-    // in Phase 2 (HttpWorkspace is still static); reject clearly if invoked early.
-    return Promise.reject(new Error("http_send is implemented in Phase 4"));
+  httpSend(req: HttpRequest, secrets): Promise<HttpResponse> {
+    // The Rust `http_send` command resolves secret tokens (from `secretArgs`) on the
+    // outbound path, runs reqwest off the IPC thread, and returns HttpResponse.
+    return invoke<HttpResponse>("http_send", { req, ...secretArgs(secrets) });
+  },
+
+  storageLoad(name) {
+    return invoke<unknown>("storage_load", { name });
+  },
+  storageSave(name, data) {
+    return invoke<void>("storage_save", { name, data });
+  },
+  secretSet(envId, key, value) {
+    return invoke<void>("secret_set", { envId, key, value });
+  },
+  secretDelete(envId, key) {
+    return invoke<void>("secret_delete", { envId, key });
+  },
+  historyAppend(entry) {
+    return invoke<void>("history_append", { entry });
   },
 };

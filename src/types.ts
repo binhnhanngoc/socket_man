@@ -86,5 +86,21 @@ export interface ConnMeta {
 
 export type ConnMetaMap = Record<string, ConnMeta>;
 
+/**
+ * One persisted history entry (HTTP request or WS session). Stored as a TEMPLATE
+ * (pre-resolution: secret tokens stay literal `{{token}}`) — see Phase 5. Appended
+ * Rust-side via `history_append`; read back via the history store.
+ */
+export interface HistoryEntry {
+  id: string;
+  ts: number;
+  kind: "ws" | "http";
+  /** Originating collection item, so a click can reopen the right editor. */
+  itemId?: string;
+  label: string;
+  summary: string;
+  payload?: unknown;
+}
+
 /** Re-export so consumers can grab the frame direction from one place. */
 export type { FrameDir };

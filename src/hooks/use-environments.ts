@@ -2,10 +2,11 @@
 // Persists to localStorage (Phase 5 migrates the data store to Rust JSON).
 // Re-exports the SECURITY-CRITICAL secret-skipping resolveEnv so call sites have
 // one import surface.
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Environment } from "../types";
 import { ENVIRONMENTS } from "../data/starter-data";
 import { resolveEnv } from "../lib/resolve-env";
+import { transport } from "../transport";
 
 export { resolveEnv } from "../lib/resolve-env";
 
@@ -31,13 +32,39 @@ function loadActiveId(): string | null {
   } catch {
     // ignore
   }
-  return "env-prod";
+  return "env-local";
 }
 
 export function useEnvironments() {
   const [environments, setEnvironments] = useState<Environment[]>(loadEnvs);
   const [activeEnvId, setActiveEnvId] = useState<string | null>(loadActiveId);
   const [editEnv, setEditEnv] = useState<EditEnvRef | null>(null);
+
+  // JSON store is the durable home (Rust-owned files). On mount, hydrate from it if it
+  // has data; otherwise the localStorage seed above migrates into it on first write.
+  const hydrated = useRef(false);
+  useEffect(() => {
+    let live = true;
+    transport
+      .storageLoad("environments")
+      .then((d) => {
+        if (live && Array.isArray(d) && d.length) setEnvironments(d as Environment[]);
+      })
+      .catch(() => {})
+      .finally(() => {
+        hydrated.current = true;
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Mirror every environments change to the JSON store (one place covers all
+  // mutations). Skip until hydration so the seed can't clobber stored data on mount.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    transport.storageSave("environments", environments).catch(() => {});
+  }, [environments]);
 
   const switchEnv = useCallback((id: string | null) => {
     setActiveEnvId(id);
@@ -86,6 +113,15 @@ export function useEnvironments() {
   const deleteEnv = useCallback(
     (id: string) => {
       setEnvironments((prev) => {
+        // Purge this env's keychain entries (orphan-free) before dropping it.
+        const target = prev.find((e) => e.id === id);
+        if (target) {
+          for (const v of target.vars || []) {
+            if (v.secret && v.key.trim()) {
+              transport.secretDelete(id, v.key).catch(() => {});
+            }
+          }
+        }
         const next = prev.filter((e) => e.id !== id);
         try {
           localStorage.setItem("relay.environments", JSON.stringify(next));

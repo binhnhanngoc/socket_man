@@ -1,7 +1,7 @@
 ---
 phase: 5
 title: "Persistence & Secrets"
-status: pending
+status: done
 priority: P1
 effort: "3-4d"
 dependencies: [2, 4]

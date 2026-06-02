@@ -59,15 +59,37 @@ export interface HttpResponse {
   sizeBytes: number;
 }
 
+/** Identifies the active environment + its secret var keys so Rust can resolve
+ *  `{{secretKey}}` tokens on the outbound path. The plaintext values are pulled
+ *  from the OS keychain Rust-side — they never travel through this object. */
+export interface SecretRefs {
+  envId: string;
+  secretKeys: string[];
+}
+
 export interface Transport {
   /** Open a WS connection. `onFrame` receives ARRAYS of frames (matches the
-   *  prototype's array-shaped addFrames). Returns the connId. */
+   *  prototype's array-shaped addFrames). Returns the connId. `secrets` lets Rust
+   *  resolve secret tokens in the URL/headers at connect. */
   wsConnect(
     cfg: ConnectConfig,
     onFrame: (f: Frame[]) => void,
-    onStatus: (s: ConnStatus) => void
+    onStatus: (s: ConnStatus) => void,
+    secrets?: SecretRefs
   ): Promise<string>;
-  wsSend(connId: string, payload: string): Promise<void>;
+  wsSend(connId: string, payload: string, secrets?: SecretRefs): Promise<void>;
   wsDisconnect(connId: string): Promise<void>;
-  httpSend(req: HttpRequest): Promise<HttpResponse>;
+  httpSend(req: HttpRequest, secrets?: SecretRefs): Promise<HttpResponse>;
+
+  // ---- persistence (Phase 5) ----
+  /** Load a JSON document by name (`collections`/`environments`/`history`). Returns
+   *  `null` when the document does not exist yet. */
+  storageLoad(name: string): Promise<unknown>;
+  storageSave(name: string, data: unknown): Promise<void>;
+  /** Write a secret value to the OS keychain. There is deliberately NO `secretGet`
+   *  — secret reads happen Rust-side only, on the outbound path. */
+  secretSet(envId: string, key: string, value: string): Promise<void>;
+  secretDelete(envId: string, key: string): Promise<void>;
+  /** Append one TEMPLATE-form entry to history (Rust caps + serializes it). */
+  historyAppend(entry: unknown): Promise<void>;
 }

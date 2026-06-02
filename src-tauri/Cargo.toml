@@ -31,6 +31,16 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # insecure-TLS verifier. (The cancel token is a small in-crate type — see ws/cancel.rs.)
 bytes = "1"
 rustls = "0.23"
+# HTTP client (Phase 4). default-features off drops native-tls. The `rustls`
+# feature pulls the aws-lc-rs provider (same as the WS verifier in ws/tls.rs) +
+# rustls-platform-verifier (the Windows cert store) — one TLS story, native roots.
+# ONE strict client only — no insecure HTTP path in v1 (self-signed toggle is wss-only).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2", "json"] }
+# OS keychain for secret tokens (Phase 5). keyring 3.x — the mature, battle-tested
+# `Entry::new(service, account)` API (4.0.x is a keyring-core rewrite with no soak;
+# 3.x chosen deliberately for the security keystone). windows-native = Windows
+# Credential Manager; default-features off keeps the Linux secret-service deps out.
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
 
 [dev-dependencies]
 # Local TLS echo server for the in-test `wss://` proof (single-task select! on TLS).
