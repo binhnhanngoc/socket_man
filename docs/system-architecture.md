@@ -1,6 +1,6 @@
 # SocketMan System Architecture
 
-**Overview:** A Tauri 2 desktop app bridging React/TypeScript UI with a Rust transport backend. Phase 1 complete with mock transport; real WS/HTTP IPC landing Phase 2+.
+**Overview:** A Tauri 2 desktop app bridging React/TypeScript UI with a Rust transport backend. Phase 1 (mock transport) and Phase 2 (real WS engine + IPC) complete; HTTP client lands Phase 4.
 
 ## Layered Architecture
 
@@ -152,36 +152,48 @@ Output: "Bearer {{token}}"  ← secret token left literal, never resolved
 - **Prefs:** localStorage (no change)
 - **History:** Rust-side append log (never loaded into JS state)
 
-## Transport Contract (TypeScript ↔ Rust)
+## Transport Contract (TypeScript ↔ Rust) — Phase 2 Implemented
 
 ### WebSocket
 
-**Outbound** (JS → Tauri command):
+**Command: `ws_connect`** (JS → Tauri):
 ```ts
 ws_connect(
-  url: string,
-  headers: Record<string, string>,  // includes Authorization
-  onFrame: (frames: Frame[]) => void,
-  onStatus: (status: ConnStatus) => void
-) -> Promise<connId: string>
+  config: ConnectConfig,  // { url: string, headers: Record<string, string> }
+  channel: ipc::Channel<ChannelMsg>  // Receiver for async frame/status/error emission
+) -> Promise<connId: string>  // Unique ID for this connection
 ```
 
-**Inbound** (Rust → JS, via `ipc::Channel`):
+**ChannelMsg stream** (Rust → JS, via `ipc::Channel.onmessage`):
 ```ts
-ChannelMsg::Frames(Frame[])    // Array of { id, dir, kind, body, ts, size }
-ChannelMsg::Status(ConnStatus) // { connId, status, connectedAt?, reason?, code?, rttMs? }
-ChannelMsg::Error(reason)      // Unrecoverable error; manual reconnect required
+ChannelMsg =
+  | { t: "frames", batch: Frame[] }       // 0+ frames emitted together
+  | { t: "status", status: ConnStatus }   // Status change (connecting/connected/disconnected/reconnecting)
+  | { t: "error", message: string, code?: number }  // Unrecoverable error (logged as sys frame)
 ```
 
-**Disconnect:**
+Frame shape:
+```ts
+{ id: u64, dir: "in"|"out"|"sys", kind: string, body: unknown, ts: u64, size: u64 }
+```
+
+ConnStatus shape:
+```ts
+{ connId: string, status: "disconnected"|"connecting"|"connected"|"reconnecting", 
+  connectedAt?: u64, reason?: string, code?: u16, rttMs?: u64 }
+```
+
+**Command: `ws_disconnect`** (JS → Tauri):
 ```ts
 ws_disconnect(connId: string) -> Promise<void>
 ```
 
-**Send:**
+**Command: `ws_send`** (JS → Tauri):
 ```ts
 ws_send(connId: string, payload: string) -> Promise<void>
 ```
+
+**Security:** Headers contain `Authorization: Bearer {{token}}` literals; Rust substitutes real values Phase 5 (via secret_get, never exposed as a Tauri command).
 
 ### HTTP
 
@@ -209,7 +221,7 @@ HttpResponse {
 | Phase | Deliverable | Status | Key Changes |
 |-------|-------------|--------|------------|
 | 1 | UI ported, mock transport | ✅ Done | React/TS scaffold, format gates (JSON gated), secret-skip resolver, mock server |
-| 2 | Real Rust WS engine + IPC | Pending | tokio-tungstenite, custom upgrade headers, ipc::Channel streaming, ChannelMsg enum |
+| 2 | Real Rust WS engine + IPC | ✅ Done | tokio-tungstenite, custom upgrade headers, ipc::Channel streaming, ChannelMsg enum |
 | 3 | WS reliability | Pending | Auto-reconnect + capped backoff, heartbeat ping/pong, RTT measurement, dead-socket detection |
 | 4 | HTTP client | Pending | reqwest, real http_send command, headers/body/status/timing, wired HttpWorkspace |
 | 5 | Persistence + secrets | Pending | JSON store (collections/envs/history), OS keychain (secret resolution Rust-side), history panel |

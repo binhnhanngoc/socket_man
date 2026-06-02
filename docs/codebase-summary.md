@@ -1,6 +1,6 @@
 # SocketMan Codebase Summary
 
-**Phase 1 Status:** Complete. Tauri 2 + React/TS frontend with mock transport; Rust backend skeleton ready for Phase 2 real IPC.
+**Status:** Phase 1 (UI + mock transport) ✅ complete. Phase 2 (Rust WS engine + IPC) ✅ complete. Phase 3 (reliability: reconnect + heartbeat) pending.
 
 ## Directory Structure
 
@@ -44,11 +44,23 @@ socket_man/
 │       ├── use-environments.test.ts (9 tests: secret-skip F1, env resolution)
 │       ├── app-smoke.test.tsx       (4 tests: App boot, tweaks panel, WS state)
 │       └── test-setup.ts
-├── src-tauri/                      # Rust backend
+├── src-tauri/                      # Rust backend (Phase 2 WS engine implemented)
 │   ├── src/
-│   │   ├── main.rs                 # Windows subsystem wrapper
-│   │   └── lib.rs                  # Tauri entrypoint; command registry appended in Phase 2+
-│   ├── Cargo.toml                  # Dependencies (tauri 2.11, tokio, reqwest, keyring, etc.)
+│   │   ├── main.rs                 # Windows subsystem wrapper (console-free)
+│   │   ├── lib.rs                  # Tauri entrypoint + WsManager state + command registry
+│   │   ├── error.rs                # AppError enum + Serialize-to-string for IPC
+│   │   ├── commands.rs             # Thin handlers: ws_connect/disconnect/send (alphabetized)
+│   │   └── ws/
+│   │       ├── mod.rs              # (module definition)
+│   │       ├── types.rs            # ConnectConfig, Frame, ConnStatus, ChannelMsg, ConnId type
+│   │       ├── request.rs          # build_request — custom headers on WS upgrade
+│   │       ├── manager.rs          # WsManager — atomic connId counter + connection map
+│   │       └── connection.rs       # Single-task tokio::select! loop over socket halves
+│   ├── tests/
+│   │   ├── ws_integration.rs       # Authorization on upgrade, echo, status flow, reconnect stable, TLS proof
+│   │   └── tls/mod.rs              # In-test TLS server helper (rustls + tokio-rustls)
+│   ├── Cargo.toml                  # tokio, tokio-tungstenite 0.29 (rustls-tls-native-roots), futures-util, dev-deps
+│   ├── Cargo.lock                  # Committed for reproducibility
 │   ├── tauri.conf.json             # Window config, production CSP (tight, no unsafe-eval)
 │   └── icons/
 ├── design/                         # Reference prototype (read-only after Phase 1)
@@ -63,32 +75,46 @@ socket_man/
 
 ## Key Modules & Responsibilities
 
-### Transport Layer (The Seam)
+### Transport Layer (The Seam) — Phase 2 Shipped
 
-**`src/transport/transport.ts`** — The interface that decouples UI from networking:
+**`src/transport/transport.ts`** — Stable interface (TS/Rust mirror):
 
 ```ts
 interface Transport {
   wsConnect(cfg: ConnectConfig, onFrame, onStatus): Promise<connId>;
   wsSend(connId, payload): Promise<void>;
   wsDisconnect(connId): Promise<void>;
-  httpSend(req: HttpRequest): Promise<HttpResponse>;
+  httpSend(req: HttpRequest): Promise<HttpResponse>;  // Pending Phase 4
 }
 ```
 
-- **Phase 1:** `mock-transport.ts` simulates a server (600ms connect latency, tick frames, echo replies).
-- **Phase 2+:** Real Tauri command bridge to Rust (WS via tokio-tungstenite, HTTP via reqwest).
-- **Why the seam:** Browser `WebSocket` API cannot set custom upgrade headers (esp. `Authorization`). Rust owns the wire.
+**`src/transport/index.ts`** — Runtime selector:
+- `__TAURI_INTERNALS__` present (in Tauri webview) → use `tauriTransport`
+- `VITE_TRANSPORT` env flag can force `mock` or `tauri` explicitly
+- Fallback: mock (for Vitest/jsdom/plain browser dev)
 
-**`ConnectConfig`** — Phase 1 minimal: `{ url, headers }`. Reliability fields (heartbeatSecs, reconnect, insecureTls) added Phase 3 when honored.
+**`src/transport/tauri-transport.ts`** — Phase 2 real transport (NEW):
+- `wsConnect(cfg, onFrame, onStatus)` → `invoke("ws_connect", { config: cfg, channel })` with fresh `ipc::Channel<ChannelMsg>`
+- `channel.onmessage = cb` setter (not awaitable method) receives streamed frames/status/errors
+- Errors surfaced as sys frames so they appear in the live log
+- `httpSend()` rejects with "implemented in Phase 4"
 
-### State Management (Coordinating Store)
+**`src/transport/mock-transport.ts`** — Phase 1 mock (unchanged):
+- 600ms connect latency, echo replies, tick-frame telemetry
+- Unchanged in Phase 2; acts as fallback for `vite dev` in browser
 
-**`src/hooks/use-workspace-store.ts`** (305 LOC — exceeds 200-line target intentionally per F15):
-- **Why one store:** The prototype `App()` cross-couples item/connection/message state. Ops like `duplicate` mutate urls + conns + msgs atomically. Splitting into five hooks forces circular imports of setters → worse coupling.
-- **Owns:** Collections, connections (url map, frame log, status), messages (saved payloads), active item/format/draft, pause state.
-- **Exposes:** `connect(itemId)`, `send(connId, payload)`, `disconnect(connId)`, `addFrames()`, `duplicateItem/Collection()`, name editors.
-- **Refs:** Uses `useRef` to avoid stale closures in transport callbacks (transport runs async, state updates are sync).
+**`ConnectConfig`** — Phase 1 minimal: `{ url: string, headers: Record<string, string> }`. Reliability fields (reconnect, insecureTls) TBD Phase 3.
+
+### State Management (Coordinating Store) — Phase 2 Enhanced
+
+**`src/hooks/use-workspace-store.ts`** (305 LOC — exceeds 200-line target intentionally):
+- **Why one store:** Prototype `App()` cross-couples item/connection/message state. Ops like `duplicate` mutate urls + conns + msgs atomically. Splitting forces circular imports → worse coupling.
+- **Owns:** Collections, connections (url map, frame log, status), messages (saved payloads), **connMeta** (per-item headers/auth), active item/format/draft, pause state.
+- **connMeta** (NEW Phase 2): `Record<itemId, ConnMeta>` where ConnMeta = `{ headers: HeaderRow[], authType: "none"|"bearer", authToken: string }`.
+  - `freshMeta()` creates default (empty headers, no auth).
+  - `composeHeaders(meta, env)` merges header rows + optional `Authorization: Bearer {{token}}` into the `headers: Record<string, string>` sent to `ws_connect`.
+- **Exposes:** `connect(itemId)`, `send(connId, payload)`, `disconnect(connId)`, `addFrames()`, `duplicateItem/Collection()`, `updateMeta(itemId, patch)`, name editors.
+- **Refs:** Uses `useRef` to avoid stale closures in transport callbacks (transport runs async, state updates are sync). `metaRef` prevents stale meta in callbacks.
 
 **Thin hooks:**
 - `use-environments.ts` — env CRUD, active env, re-exports `resolveEnv` pure function.
@@ -124,14 +150,18 @@ resolveEnv(str, env, { skipSecret: true })
 - **JSON round-trip (gated):** 7 samples must pass losslessly (no exceptions). A green test suite means JSON works perfectly.
 - **YAML/XML (documented subset):** Test only the lossless cases. Known limitations (array-of-arrays, multi-doc YAML, numeric coercion) are **documented in the test file**, not hidden as xfail — v1 scope per plan.
 
-### Components (UI Port)
+### Components (UI Port) — Phase 2 Enhanced
 
 All `.jsx` from `design/` ported to `.tsx`:
 - **Top nav:** Theme/density/env switcher.
 - **Sidebar:** Collections tree, item list, nested rename/duplicate.
 - **Message library:** Saved payloads per collection.
-- **WS workspace:** Connection bar (connect/disconnect, status), live log stream with pause, composer, format tabs (JSON/YAML/XML/Text), Headers/Auth/Settings panes.
-- **HTTP workspace:** Method/URL/headers form, response viewer.
+- **WS workspace:** Connection bar (connect/disconnect, status), live log stream with pause, composer, format tabs (JSON/YAML/XML/Text).
+- **WS tab panes** (NEW Phase 2, `ws-tab-panes.tsx`):
+  - **Headers pane:** Editable rows (k/v pairs) sent as custom headers on WS upgrade. Add/remove rows, empty state.
+  - **Auth pane:** Type selector (None/Bearer token). Bearer input accepts literals or `{{token}}` templates (resolved Phase 5).
+  - **Settings pane:** Display-only in Phase 2; reliability defaults (ping/backoff) bound Phase 3.
+- **HTTP workspace:** Method/URL/headers form, response viewer (command rejects "Phase 4").
 - **Env menu/editor:** Active env display, manage vars (plaintext + secret flags).
 - **Tweaks panel:** Dark mode toggle, accent color, density (compact/normal/spacious).
 - **Resizer:** Draggable sidebar/library width.
@@ -156,12 +186,42 @@ All `.jsx` from `design/` ported to `.tsx`:
 3. **IPC surface:** Phase 1 has zero commands. Phase 2+ whitelist only the commands that exist (ws_connect, ws_send, ws_disconnect, http_send).
 4. **No secret_get command:** The resolver is Rust-internal, never exposed to the webview (critical plan F3).
 
-## Next: Phase 2 (Planned, Not Yet Built)
+## Phase 2 Implementation Details (Complete)
 
-- **Real Rust transport:** ws_connect/send/disconnect (tokio-tungstenite), http_send (reqwest).
-- **IPC bridge:** Tauri `Command` handlers + `ipc::Channel<ChannelMsg>` streaming for frames/status/errors.
-- **Custom upgrade headers:** Set Authorization on WS upgrade (impossible in browser WebSocket API, trivial in Rust).
-- **Backend skeleton:** Shared `error.rs`/`lib.rs` builder + command registry (alphabetized), disjoint `ws/` and `http/` modules.
+**Rust backend (`src-tauri/src/`):**
+- **`error.rs`:** `AppError` enum (InvalidUrl, Connect, UnknownConn, Send) using `thiserror`. Serializes to plain string for Tauri IPC error handling.
+- **`commands.rs`:** Three thin handlers (alphabetized in registry):
+  - `ws_connect(config, channel, manager)` → invokes `manager.connect()`, returns connId.
+  - `ws_disconnect(connId, manager)` → invokes `manager.disconnect()`.
+  - `ws_send(connId, payload, manager)` → invokes `manager.send()`.
+  - Note: `secret_get()` intentionally NOT registered; kept Rust-private (Phase 5).
+- **`lib.rs`:** Tauri entrypoint. Manages `WsManager` state + command registry. On window-destroy: calls `shutdown_all()` (drops all connection senders, tasks exit).
+- **`ws/types.rs`:** IPC contract mirror:
+  - `ConnectConfig` (url + headers as BTreeMap). Debug impl masks sensitive header values (Authorization/Cookie/Proxy-Authorization) → "***".
+  - `Frame`, `ConnStatus`, `ConnStatusKind`, `FrameDir`, `ConnId` type, `ChannelMsg` enum (#[serde] tagged "t" field, camelCase rename).
+  - Helper fn `is_sensitive_header()` checks for redacting.
+- **`ws/request.rs`:** `build_request()` creates tungstenite ClientRequestBuilder with custom headers (incl. Authorization). Validates URL is ws:// or wss:// only.
+- **`ws/manager.rs`:** `WsManager` holds atomic `conn_id_counter` + `connections: DashMap<ConnId, Sender<...>>`. Exposes `connect()`, `send()`, `disconnect()`, `shutdown_all()` with error scrubbing (strips known secret headers from emitted errors).
+- **`ws/connection.rs`:** Single-task loop running `tokio::select!` over:
+  - Incoming WS frames (split stream read half) → emits `ChannelMsg::Frames`.
+  - Outgoing frame commands (mpsc Receiver) → sends to WS.
+  - Task-local reconnect state (Phase 3 will add backoff, heartbeat).
+
+**Frontend updates (`src/`)**:
+- **`types.ts`:** New `ConnMeta`, `HeaderRow`, `AuthType` types.
+- **`transport/tauri-transport.ts`:** Real transport calling `invoke("ws_connect", ...)` with ipc Channel. Handles frame/status/error routing.
+- **`hooks/use-workspace-store.ts`:** Added `connMeta` state + `updateMeta()` + `composeHeaders()` fn merging headers + auth token into ConnectConfig.
+- **`components/ws-tab-panes.tsx`:** `HeadersPane`, `AuthPane` (new); editable, composed into headers at connect time.
+
+**Testing:**
+- `src-tauri/tests/ws_integration.rs` + `tls/mod.rs`: Authorization on upgrade, echo, status flow, reconnect ID stable, queued-send survives swap, conn-map no memory leaks, secret redaction, wss:// proof.
+
+## Next: Phase 3 (Reliability & Heartbeat)
+
+- **Auto-reconnect:** Exponential backoff (1s, 2s, ..., 60s), single-task select! manages state (single source of truth for connId).
+- **Heartbeat:** 30s ping interval, 5s pong timeout → dead-socket detection.
+- **Status kinds:** `connecting`, `connected`, `reconnecting` added; `disconnected` for explicit user disconnect.
+- **Settings pane:** Bind reliabilty UI (ping interval, backoff cap) to per-connection config sent to Rust.
 
 ---
 
@@ -175,10 +235,12 @@ All `.jsx` from `design/` ported to `.tsx`:
 
 ---
 
-## Constraints & Limitations (v1)
+## Constraints & Limitations (Phase 2 Snapshot)
 
-- **Secrets in localhost dev:** Plaintext in `%APPDATA%/SocketMan/` (Phase 5 uses OS keychain).
-- **Persistence in Phase 1:** localStorage only (mock transport, no real state). Phase 5 moves collections/envs to JSON files.
+- **Reliability:** No auto-reconnect, heartbeat, or RTT yet (lands Phase 3).
+- **Secrets:** Plaintext in localStorage (Phase 5 moves to OS keychain + Rust resolution).
+- **Persistence:** localStorage only (Phase 5 moves collections/envs to JSON files + append-only history).
+- **HTTP:** Stubbed; reqwest client lands Phase 4.
 - **YAML/XML:** Best-effort (view-only); numeric coercion, single-element collapse; JSON is the lossless path.
-- **Platform:** Windows-first (WebView2 preinstalled on Win11). Cross-platform build deferred (Phase 7).
-- **TLS v1:** No custom cert pinning or per-host insecure toggles yet (Phase 3).
+- **Platform:** Windows-first (WebView2 preinstalled). Cross-platform build deferred Phase 7.
+- **TLS:** rustls + native-roots (strict in Phase 2). Insecure toggle lands Phase 3.

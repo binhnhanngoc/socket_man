@@ -110,6 +110,8 @@ export default function App() {
               split={t.logLayout === "split"}
               dense={dense}
               env={env.activeEnv}
+              meta={store.activeMeta!}
+              onMeta={(patch) => store.updateMeta(store.activeId, patch)}
             />
           </>
         ) : (

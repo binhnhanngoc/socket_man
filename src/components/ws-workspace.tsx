@@ -1,7 +1,7 @@
 // WS workspace: connection bar + tabbed message log / headers / auth / settings
 // + composer. Ported from design/app.jsx (WsWorkspace).
 import { useMemo, useState } from "react";
-import type { Environment, Item, ConnState } from "../types";
+import type { ConnMeta, Environment, Item, ConnState } from "../types";
 import type { Format } from "../formats/serialize";
 import { ConnectionBar } from "./connection-bar";
 import { LogStream } from "./log-stream";
@@ -27,6 +27,8 @@ interface WsWorkspaceProps {
   dense: boolean;
   now: number;
   env: Environment | null;
+  meta: ConnMeta;
+  onMeta: (patch: Partial<ConnMeta>) => void;
 }
 
 type Tab = "messages" | "headers" | "auth" | "settings";
@@ -47,7 +49,7 @@ const FORMATS: [Format, string][] = [
 
 export function WsWorkspace(props: WsWorkspaceProps) {
   const { item, conn, paused, onConnect, onDisconnect, onUrl, onSend, onClear, onTogglePause } = props;
-  const { draft, setDraft, fmt, onFmt, split, dense, now, env } = props;
+  const { draft, setDraft, fmt, onFmt, split, dense, now, env, meta, onMeta } = props;
   const [tab, setTab] = useState<Tab>("messages");
   const [filter, setFilter] = useState<FilterKind>("all");
   const status = conn.status;
@@ -133,8 +135,8 @@ export function WsWorkspace(props: WsWorkspaceProps) {
           )}
         </>
       )}
-      {tab === "headers" && <HeadersPane />}
-      {tab === "auth" && <AuthPane />}
+      {tab === "headers" && <HeadersPane meta={meta} onChange={onMeta} />}
+      {tab === "auth" && <AuthPane meta={meta} onChange={onMeta} />}
       {tab === "settings" && <SettingsPane />}
 
       {tab === "messages" && (

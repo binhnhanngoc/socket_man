@@ -33,7 +33,7 @@ before or alongside implementation. Tests gate phase completion. **No mocks/fake
 | Phase | Name | Status | Deliverable |
 |-------|------|--------|-------------|
 | 1 | [Scaffold & UI Port](./phase-01-scaffold-ui-port.md) | ✅ Done | Tauri+Vite+React+TS app; UI ported to `.tsx` behind a `Transport` interface (mock impl); visual parity; format round-trip tests green |
-| 2 | [Rust WS Engine & IPC](./phase-02-rust-ws-engine-ipc.md) | Pending | Real `ws_connect/send/disconnect` + frame/status Channel; custom upgrade headers; live log |
+| 2 | [Rust WS Engine & IPC](./phase-02-rust-ws-engine-ipc.md) | ✅ Done | Real `ws_connect/send/disconnect` + frame/status Channel; custom upgrade headers; live log |
 | 3 | [WS Reliability](./phase-03-ws-reliability.md) | Pending | Auto-reconnect + capped backoff; heartbeat ping/pong with RTT; dead-socket detection |
 | 4 | [HTTP Client](./phase-04-http-client.md) | Pending | Real `http_send` (reqwest) with status/headers/body/timing; wired `HttpWorkspace` |
 | 5 | [Persistence & Secrets](./phase-05-persistence-secrets.md) | Pending | JSON store (collections/environments/history) + keychain secrets + Rust-side secret `{{token}}` resolution |

@@ -1,11 +1,27 @@
 ---
 phase: 2
 title: "Rust WS Engine & IPC"
-status: pending
+status: done
 priority: P1
 effort: "3-4d"
 dependencies: [1]
+completed: "2026-06-02"
 ---
+
+> **Completed 2026-06-02 (cook).** Phase 1.5 backend skeleton (`error.rs`/`AppError`,
+> `lib.rs` registry, `Cargo.toml` WS deps + committed `Cargo.lock`) + full Phase 2 WS
+> engine. Single-task `select!` (`connection.rs`), hoisted `(tx,rx)` in `manager.rs`,
+> stable connId, redacting `Debug` + emit-time secret scrub. Headers/Auth panes wired
+> editable → `ConnectConfig.headers` (F14). `tauri-transport.ts` uses the `onmessage`
+> setter; `index.ts` switches mock↔tauri by Tauri-runtime detection / `VITE_TRANSPORT`.
+> Gates green: `cargo test` 5 unit + 5 integration (incl. **wss:// TLS** proof of the
+> single-task loop + **connId-stable-across-reconnect / queued-send-survives** + secret
+> redaction + conn-map-no-growth), `npm run build` (tsc strict + vite), 29 vitest (mock
+> still selected under jsdom), CSP gate. Code-review DONE_WITH_CONCERNS: 0 Critical/High,
+> all 8 locked contracts (F1/F3/F4/F6/F10/F13/F14/F25) verified; 2 Low (disconnect timing
+> noted for P3; cosmetic clippy in test helpers). **Deferred:** manual GUI E2E (step 8)
+> against a public `wss://` echo with a UI-typed Authorization header — needs a human at
+> the running app; the header-on-upgrade path itself is test-verified over ws:// + wss://.
 
 > **Red-team applied (2026-06-02):** depends on the **Phase 1.5 backend skeleton** (`error.rs`/`AppError`,
 > `lib.rs` registry, `Cargo.toml` base) — build that first. Single-task `select!` topology with hoisted
@@ -184,19 +200,19 @@ Ok(b) // IntoClientRequest
 
 ## Todo List
 
-- [ ] Phase 1.5 backend skeleton (error.rs/AppError, registry, Cargo base) exists
-- [ ] WS crates added + PINNED; `cargo build` clean
-- [ ] `build_request` unit test (custom headers) written first, green
-- [ ] `types.rs` mirrors `transport.ts` contract incl. `ChannelMsg::Error`
-- [ ] Integration test: Authorization header + echo + status + **connId-stable-across-reconnect** + **wss://** case, written first, green
-- [ ] Redaction test: secret token absent from AppError/reason/Error message
-- [ ] Single-task `select!` connection loop (no two-task split); `(tx,rx)` hoisted to manager
-- [ ] Headers/Auth panes wired to `ConnectConfig.headers` (editable)
-- [ ] `ws_connect/ws_send/ws_disconnect` commands implemented + registered (alphabetized)
-- [ ] connId never copied on item duplicate (`null` on copies)
-- [ ] Window-close task cleanup wired
-- [ ] `tauri-transport.ts` uses `channel.onmessage = cb` (setter); `index.ts` switches mock↔tauri by env flag
-- [ ] Manual E2E: real echo endpoint with **UI-entered** custom Authorization header passes
+- [x] Phase 1.5 backend skeleton (error.rs/AppError, registry, Cargo base) exists
+- [x] WS crates added + PINNED (Cargo.lock committed); `cargo build` clean
+- [x] `build_request` unit test (custom headers) written first, green
+- [x] `types.rs` mirrors `transport.ts` contract incl. `ChannelMsg::Error`
+- [x] Integration test: Authorization header + echo + status + **connId-stable-across-reconnect** + **wss://** case, green
+- [x] Redaction test: secret token absent from AppError/reason/Error message
+- [x] Single-task `select!` connection loop (no two-task split); `(tx,rx)` hoisted to manager
+- [x] Headers/Auth panes wired to `ConnectConfig.headers` (editable)
+- [x] `ws_connect/ws_send/ws_disconnect` commands implemented + registered (alphabetized)
+- [x] connId never copied on item duplicate (`null` on copies)
+- [x] Window-close task cleanup wired (`shutdown_all` on `WindowEvent::Destroyed`)
+- [x] `tauri-transport.ts` uses `channel.onmessage = cb` (setter); `index.ts` switches mock↔tauri by env flag/runtime
+- [ ] Manual E2E: real echo endpoint with **UI-entered** custom Authorization header (needs human at running app; upgrade-header path test-verified over ws:// + wss://)
 
 ## Success Criteria
 

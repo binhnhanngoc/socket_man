@@ -14,7 +14,7 @@
 // thin hooks; the UI-only 1200ms clock stays in App.
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { Collection, ConnMap, ConnState, Environment, MessageMap, SavedMessage } from "../types";
+import type { Collection, ConnMap, ConnMeta, ConnMetaMap, ConnState, Environment, MessageMap, SavedMessage } from "../types";
 import type { Frame } from "../transport/transport";
 import { transport } from "../transport";
 import { COLLECTIONS, MESSAGES } from "../data/starter-data";
@@ -59,16 +59,42 @@ function freshConn(): ConnState {
   return { status: "disconnected", frames: [], connectedAt: null };
 }
 
+function freshMeta(): ConnMeta {
+  // Start empty: the user adds headers / an auth token. (Starter demo headers are
+  // seeded in Phase 6's rebrand, not hardcoded here.)
+  return { headers: [], authType: "none", authToken: "" };
+}
+
+// Compose the per-item header rows + Auth pane into the outbound header map. Values
+// are env-resolved with skipSecret so a {{secret}} stays literal and is substituted
+// Rust-side at connect (Phase 5); non-secret {{vars}} resolve here.
+function composeHeaders(meta: ConnMeta | undefined, env: Environment | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!meta) return out;
+  for (const row of meta.headers) {
+    const key = row.k.trim();
+    if (key) out[key] = resolveEnv(row.v, env, { skipSecret: true });
+  }
+  if (meta.authType === "bearer" && meta.authToken.trim()) {
+    out["Authorization"] = "Bearer " + resolveEnv(meta.authToken.trim(), env, { skipSecret: true });
+  }
+  return out;
+}
+
 function bootstrap() {
   const collections = loadCollections();
   const items = collections.flatMap((c) => c.items);
   const conns: ConnMap = {};
+  const connMeta: ConnMetaMap = {};
   items.forEach((it) => {
-    if (it.kind === "ws") conns[it.id] = freshConn();
+    if (it.kind === "ws") {
+      conns[it.id] = freshConn();
+      connMeta[it.id] = freshMeta();
+    }
   });
   const urls = Object.fromEntries(items.map((i) => [i.id, i.url]));
   const msgs: MessageMap = JSON.parse(JSON.stringify(MESSAGES));
-  return { collections, conns, urls, msgs };
+  return { collections, conns, connMeta, urls, msgs };
 }
 
 export function useWorkspaceStore(activeEnv: Environment | null) {
@@ -77,6 +103,7 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
 
   const [collections, setCollections] = useState<Collection[]>(boot.current.collections);
   const [conns, setConns] = useState<ConnMap>(boot.current.conns);
+  const [connMeta, setConnMeta] = useState<ConnMetaMap>(boot.current.connMeta);
   const [urls, setUrls] = useState<Record<string, string>>(boot.current.urls);
   const [msgs, setMsgs] = useState<MessageMap>(boot.current.msgs);
   const [activeId, setActiveId] = useState("ws-live");
@@ -98,6 +125,8 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
   pausedRef.current = paused;
   const envRef = useRef(activeEnv);
   envRef.current = activeEnv;
+  const metaRef = useRef(connMeta);
+  metaRef.current = connMeta;
 
   const allItems = useMemo(() => collections.flatMap((c) => c.items), [collections]);
   const statuses = useMemo(
@@ -136,9 +165,10 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
       // Resolve only NON-secret tokens for the URL; secret tokens stay literal
       // ({{token}}) and are substituted Rust-side at connect (Phase 5).
       const url = resolveEnv(urls[id] || item.url, envRef.current, { skipSecret: true });
+      const headers = composeHeaders(metaRef.current[id], envRef.current);
       setConns((p) => ({ ...p, [id]: { ...p[id], status: "connecting" } }));
       transport
-        .wsConnect({ url, headers: {} }, (frames) => ingest(id, frames), (s) => {
+        .wsConnect({ url, headers }, (frames) => ingest(id, frames), (s) => {
           setConns((p) => {
             const c = p[id];
             if (!c) return p;
@@ -222,6 +252,10 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
   const ensureWsState = useCallback((origId: string, newId: string, srcUrl: string) => {
     setUrls((p) => ({ ...p, [newId]: p[origId] || srcUrl }));
     setConns((p) => ({ ...p, [newId]: freshConn() }));
+    // Copy the headers/auth meta to the duplicate, but NOT the runtime connId
+    // (connIdMap is keyed by item id; the new id has no entry → connId stays null,
+    // so the copy never aliases the source's live socket — F10).
+    setConnMeta((p) => ({ ...p, [newId]: p[origId] ? JSON.parse(JSON.stringify(p[origId])) : freshMeta() }));
     setMsgs((p) => ({ ...p, [newId]: JSON.parse(JSON.stringify(p[origId] || MESSAGES[origId] || [])) }));
   }, []);
 
@@ -284,6 +318,11 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
 
   const reorderMsgs = useCallback((next: SavedMessage[]) => setMsgs((p) => ({ ...p, [activeId]: next })), [activeId]);
   const setUrl = useCallback((id: string, v: string) => setUrls((p) => ({ ...p, [id]: v })), []);
+  // Headers/Auth pane editing → per-item connection meta (composed into headers at connect).
+  const updateMeta = useCallback(
+    (id: string, patch: Partial<ConnMeta>) => setConnMeta((p) => ({ ...p, [id]: { ...(p[id] || freshMeta()), ...patch } })),
+    []
+  );
   const clearFrames = useCallback(
     (id: string) => setConns((p) => (p[id] ? { ...p, [id]: { ...p[id], frames: [] } } : p)),
     []
@@ -292,6 +331,7 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
   const activeItem = allItems.find((i) => i.id === activeId);
   const activeItemWithUrl = activeItem ? { ...activeItem, url: urls[activeItem.id] || activeItem.url } : null;
   const activeConn = activeItem && activeItem.kind === "ws" ? conns[activeId] : null;
+  const activeMeta = activeItem && activeItem.kind === "ws" ? connMeta[activeId] || freshMeta() : null;
 
   return {
     collections,
@@ -305,6 +345,7 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
     statuses,
     activeItemWithUrl,
     activeConn,
+    activeMeta,
     setActiveId,
     setActiveMsgId,
     setPaused,
@@ -316,6 +357,7 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
     sendSaved,
     loadSaved,
     setUrl,
+    updateMeta,
     clearFrames,
     renameColl,
     renameItem,

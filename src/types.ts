@@ -58,5 +58,27 @@ export interface ConnState {
 
 export type ConnMap = Record<string, ConnState>;
 
+/** One editable connection header row (Headers pane). */
+export interface HeaderRow {
+  id: string;
+  k: string;
+  v: string;
+}
+
+export type AuthType = "none" | "bearer";
+
+/**
+ * Per-item connection metadata that composes into `ConnectConfig.headers` at
+ * connect time — the user-driven path for the custom `Authorization` header on the
+ * WS upgrade (the project's one hard requirement).
+ */
+export interface ConnMeta {
+  headers: HeaderRow[];
+  authType: AuthType;
+  authToken: string;
+}
+
+export type ConnMetaMap = Record<string, ConnMeta>;
+
 /** Re-export so consumers can grab the frame direction from one place. */
 export type { FrameDir };
