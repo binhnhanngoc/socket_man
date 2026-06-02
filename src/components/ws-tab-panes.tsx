@@ -97,16 +97,49 @@ export function AuthPane({ meta, onChange }: PaneProps) {
   );
 }
 
-export function SettingsPane() {
+// Settings pane (F18): mostly DISPLAY-ONLY like the prototype. Only two controls are
+// live in v1 — auto-reconnect on/off and the per-connection insecure-TLS toggle. The
+// heartbeat / backoff / coalesce / buffer values are hardcoded defaults shown as
+// read-only labels (no editable controls, validation, or persistence).
+export function SettingsPane({ meta, onChange }: PaneProps) {
   return (
     <div className="tab-pane">
       <div className="lib-section">Connection settings</div>
+
       <div className="set-row">
         <span>Auto-reconnect</span>
-        <span className="toggle on">
+        <button
+          className={"toggle" + (meta.reconnect ? " on" : "")}
+          aria-pressed={meta.reconnect}
+          title="Reconnect automatically after a dropped socket (capped 30s backoff)"
+          onClick={() => onChange({ reconnect: !meta.reconnect })}
+        >
           <span className="knob"></span>
-        </span>
+        </button>
       </div>
+
+      <div className="set-row">
+        <span>
+          Disable TLS verification
+          {meta.insecureTls && <span className="tls-badge">MITM RISK</span>}
+        </span>
+        <button
+          className={"toggle" + (meta.insecureTls ? " on danger" : "")}
+          aria-pressed={meta.insecureTls}
+          title="Turn OFF all certificate/hostname checks for this connection (footgun)"
+          onClick={() => onChange({ insecureTls: !meta.insecureTls })}
+        >
+          <span className="knob"></span>
+        </button>
+      </div>
+      {meta.insecureTls && (
+        <div className="auth-note danger-note">
+          All certificate, expiry, and hostname checks are OFF for this connection — it is fully exposed to
+          man-in-the-middle interception. Use only for a trusted self-signed dev endpoint. You are re-warned at
+          every connect.
+        </div>
+      )}
+
       <div className="set-row">
         <span>Heartbeat interval</span>
         <span className="mono set-val">30 s</span>
@@ -116,14 +149,12 @@ export function SettingsPane() {
         <span className="mono set-val">exponential · max 30 s</span>
       </div>
       <div className="set-row">
-        <span>Max log buffer</span>
-        <span className="mono set-val">400 frames</span>
+        <span>Frame coalescing</span>
+        <span className="mono set-val">~80 ms</span>
       </div>
       <div className="set-row">
-        <span>Pretty-print incoming</span>
-        <span className="toggle on">
-          <span className="knob"></span>
-        </span>
+        <span>Max log buffer</span>
+        <span className="mono set-val">400 frames</span>
       </div>
     </div>
   );

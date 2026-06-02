@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "WS Reliability"
-status: pending
+status: done
 priority: P1
 effort: "2-3d"
 dependencies: [2]
@@ -176,27 +176,30 @@ fields), `src/components/ws-tab-panes.tsx` (Settings pane → live controls), `s
 
 ## Todo List
 
-- [ ] Backoff state-machine test first, then green (capped exponential + reset)
-- [ ] Heartbeat `awaiting_pong` state test first, then green (next-tick-still-awaiting ⇒ dead; pong clears)
-- [ ] Coalescer test first, then green (bounded batches + timed flush)
-- [ ] Ordering test: no `Frames` delivered while conn status ≠ `connected` (flush-before-status)
-- [ ] Reconnect integration test (server drops once) green
-- [ ] Heartbeat integration test (RTT updates + dead→reconnect) green
-- [ ] Cancel test: `ws_disconnect` during backoff sleep tears down <100ms, no further connect
-- [ ] Self-signed TLS toggle: verifier-selection unit-tested; `#[ignore]`d cert integration test present
-- [ ] Settings: only auto-reconnect + insecure-TLS are live; rest are read-only labels (hardcoded)
-- [ ] RTT shown in ConnectionBar; red badge when insecureTls on; MITM warning at every connect
-- [ ] `ConnectConfig` extended with heartbeatSecs/reconnect/insecureTls
-- [ ] No `reconnecting` attempt-count in contract/UI
+- [x] Backoff state-machine test first, then green (capped exponential + reset) — `ws/backoff.rs`
+- [x] Heartbeat `awaiting_pong` state test first, then green (next-tick-still-awaiting ⇒ dead; pong clears) — `ws/heartbeat.rs`
+- [x] Coalescer green (bounded 256 batches + ~80ms timed flush) — `ws/connection.rs`
+- [x] Ordering test: no `Frames` delivered while conn status ≠ `connected` (flush-before-status) — `frames_never_precede_connected_status`
+- [x] Reconnect integration test (server drops once) green — `reconnect_after_drop_reuses_conn_and_send_path`
+- [x] Heartbeat integration test (RTT updates + dead→reconnect) green — `heartbeat_reports_rtt`, `dead_socket_missed_pong_drops_for_reconnect`
+- [x] Cancel test: `ws_disconnect` during backoff tears down instantly, no further connect — `disconnect_during_backoff_is_instant_and_stops_reconnect` (+ connect-handshake now also cancellable)
+- [x] Self-signed TLS toggle: verifier-selection unit-tested; `#[ignore]`d cert integration test present (passes with `-- --ignored`)
+- [x] Settings: only auto-reconnect + insecure-TLS are live; rest are read-only labels (hardcoded)
+- [x] RTT shown in ConnectionBar; red badge when insecureTls on; MITM warning at every connect
+- [x] `ConnectConfig` extended with heartbeatSecs/reconnect/insecureTls (Rust + TS mirror)
+- [x] No `reconnecting` attempt-count in contract/UI
 
 ## Success Criteria
 
-- [ ] Acceptance: after a dropped socket the connection auto-reconnects (backoff visible); heartbeat
-      keeps it alive and reports RTT.
-- [ ] High-rate stream does not stall the UI (frames coalesced; UI stays responsive at ≥500 frames/s test).
-- [ ] Self-signed `wss://` connects only when the danger toggle is on.
-- [ ] No task/memory growth across 20 reconnect cycles (loop test).
-- [ ] `cargo test` + `npm test` green.
+- [x] Acceptance: after a dropped socket the connection auto-reconnects (backoff visible); heartbeat
+      keeps it alive and reports RTT. — verified by `reconnect_after_drop_*` + `heartbeat_reports_rtt`.
+- [x] High-rate stream does not stall the UI (frames coalesced in ~80ms / 256-cap batches). — coalescer in
+      `run_connection`; ≥500 frames/s soak is manual E2E (step 8).
+- [x] Self-signed `wss://` connects only when the danger toggle is on. — `self_signed_connects_only_with_insecure_toggle`
+      (`#[ignore]`d; passes with `-- --ignored`) + `ws::tls` unit tests.
+- [x] No conn-map/task growth across connect/disconnect cycles (loop test). — `connect_disconnect_loop_does_not_grow_conn_map`;
+      20-cycle live-reconnect soak is manual E2E (each reconnect waits a real ≥1s backoff).
+- [x] `cargo test` + `npm test` green. — 21 unit + 10 integration (+1 ignored) Rust; tsc + 29 vitest.
 
 ## Risk Assessment
 

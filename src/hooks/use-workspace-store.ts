@@ -61,8 +61,9 @@ function freshConn(): ConnState {
 
 function freshMeta(): ConnMeta {
   // Start empty: the user adds headers / an auth token. (Starter demo headers are
-  // seeded in Phase 6's rebrand, not hardcoded here.)
-  return { headers: [], authType: "none", authToken: "" };
+  // seeded in Phase 6's rebrand, not hardcoded here.) Auto-reconnect defaults on;
+  // insecure-TLS defaults off (a footgun the user must opt into per connection).
+  return { headers: [], authType: "none", authToken: "", reconnect: true, insecureTls: false };
 }
 
 // Compose the per-item header rows + Auth pane into the outbound header map. Values
@@ -162,19 +163,45 @@ export function useWorkspaceStore(activeEnv: Environment | null) {
     (id: string) => {
       const item = allItems.find((i) => i.id === id);
       if (!item) return;
+      const meta = metaRef.current[id];
+      // Re-warn at EVERY connect when TLS verification is disabled (it persists on the
+      // item, so a saved `true` must never reconnect silently). Cancel aborts connect.
+      if (meta?.insecureTls) {
+        const ok = window.confirm(
+          "⚠ TLS verification is DISABLED for this connection.\n\n" +
+            "All certificate, expiry, and hostname checks are turned off — the connection " +
+            "is fully exposed to man-in-the-middle interception. Only continue for a trusted " +
+            "self-signed dev endpoint.\n\nConnect anyway?"
+        );
+        if (!ok) return;
+      }
       // Resolve only NON-secret tokens for the URL; secret tokens stay literal
       // ({{token}}) and are substituted Rust-side at connect (Phase 5).
       const url = resolveEnv(urls[id] || item.url, envRef.current, { skipSecret: true });
-      const headers = composeHeaders(metaRef.current[id], envRef.current);
+      const headers = composeHeaders(meta, envRef.current);
+      const cfg = {
+        url,
+        headers,
+        reconnect: { enabled: meta?.reconnect ?? true },
+        insecureTls: !!meta?.insecureTls,
+      };
       setConns((p) => ({ ...p, [id]: { ...p[id], status: "connecting" } }));
       transport
-        .wsConnect({ url, headers }, (frames) => ingest(id, frames), (s) => {
+        .wsConnect(cfg, (frames) => ingest(id, frames), (s) => {
           setConns((p) => {
             const c = p[id];
             if (!c) return p;
+            // A fresh (re)connect carries connectedAt (supervisor stamps it) → use it,
+            // restarting the timer. A heartbeat/rtt update carries none → preserve the
+            // existing connectedAt so the live timer doesn't reset on every ping.
             const connectedAt =
-              s.status === "connected" ? s.connectedAt ?? Date.now() : s.status === "disconnected" ? null : c.connectedAt;
-            return { ...p, [id]: { ...c, status: s.status, connectedAt } };
+              s.status === "connected"
+                ? s.connectedAt ?? c.connectedAt ?? Date.now()
+                : s.status === "disconnected"
+                  ? null
+                  : c.connectedAt;
+            const rttMs = s.status === "disconnected" ? undefined : s.rttMs ?? c.rttMs;
+            return { ...p, [id]: { ...c, status: s.status, connectedAt, rttMs } };
           });
         })
         .then((connId) => {

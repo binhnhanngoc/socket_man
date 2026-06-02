@@ -30,7 +30,7 @@ mod tests {
 
     fn cfg(url: &str, pairs: &[(&str, &str)]) -> ConnectConfig {
         let headers = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
-        ConnectConfig { url: url.into(), headers }
+        ConnectConfig { url: url.into(), headers, ..Default::default() }
     }
 
     #[test]

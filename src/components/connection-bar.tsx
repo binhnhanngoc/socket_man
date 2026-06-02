@@ -10,6 +10,10 @@ interface ConnectionBarProps {
   item: Item;
   status: ConnStatusKind;
   elapsed: number;
+  /** Last heartbeat round-trip time (ms), shown when connected. */
+  rttMs?: number;
+  /** True when TLS verification is disabled for this connection (red badge). */
+  insecureTls?: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
   onUrl: (v: string) => void;
@@ -18,9 +22,10 @@ interface ConnectionBarProps {
 
 const TOKEN_RE = /\{\{\s*[\w.-]+\s*\}\}/;
 
-export function ConnectionBar({ item, status, elapsed, onConnect, onDisconnect, onUrl, env }: ConnectionBarProps) {
+export function ConnectionBar({ item, status, elapsed, rttMs, insecureTls, onConnect, onDisconnect, onUrl, env }: ConnectionBarProps) {
   const connected = status === "connected";
   const connecting = status === "connecting";
+  const reconnecting = status === "reconnecting";
   const hasTokens = TOKEN_RE.test(item.url);
   // Resolve preview with skipSecret so a secret token in a URL is NOT rendered
   // to the DOM — it stays literal ({{token}}) and is resolved Rust-side (F1).
@@ -28,6 +33,11 @@ export function ConnectionBar({ item, status, elapsed, onConnect, onDisconnect, 
   return (
     <div className="conn-bar">
       <span className={"proto-chip " + item.kind}>{item.kind === "ws" ? "WSS" : item.method}</span>
+      {insecureTls && (
+        <span className="tls-badge" title="TLS verification is OFF for this connection (MITM risk)">
+          TLS OFF
+        </span>
+      )}
       <div className="url-field">
         <input className="url-input" value={item.url} onChange={(e) => onUrl(e.target.value)} spellCheck={false} />
         {hasTokens && (
@@ -40,10 +50,11 @@ export function ConnectionBar({ item, status, elapsed, onConnect, onDisconnect, 
       </div>
       <div className={"status-chip " + status}>
         <span className="conn-dot"></span>
-        {connected ? "Connected" : connecting ? "Connecting…" : "Disconnected"}
+        {connected ? "Connected" : connecting ? "Connecting…" : reconnecting ? "Reconnecting…" : "Disconnected"}
         {connected && <span className="status-timer">{fmtDur(elapsed)}</span>}
+        {connected && rttMs != null && <span className="conn-rtt" title="Heartbeat round-trip time">{rttMs} ms</span>}
       </div>
-      {connected || connecting ? (
+      {connected || connecting || reconnecting ? (
         <button className="btn btn-secondary" onClick={onDisconnect}>
           <IconPlug size={15} /> Disconnect
         </button>

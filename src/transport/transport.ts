@@ -12,6 +12,13 @@ export interface ConnectConfig {
   /** Sent on the WS upgrade request — includes Authorization. (The whole reason
    *  for a Rust transport: the browser WebSocket API can't set upgrade headers.) */
   headers: Record<string, string>;
+  /** Heartbeat interval (seconds). Hardcoded 30 in v1; omitted → Rust default. */
+  heartbeatSecs?: number;
+  /** Auto-reconnect. Only `enabled` is user-facing; backoff cap is a hardcoded 30s. */
+  reconnect?: { enabled: boolean; maxBackoffSecs?: number };
+  /** Disables ALL TLS verification for this one connection (full MITM exposure).
+   *  Default off; opt-in per connection with a visible warning. */
+  insecureTls?: boolean;
 }
 
 export type FrameDir = "in" | "out" | "sys";

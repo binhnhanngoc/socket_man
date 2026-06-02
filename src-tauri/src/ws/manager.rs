@@ -2,9 +2,12 @@
 // each connection's task.
 //
 // Channel ownership is HOISTED here (F4): the manager creates `(tx, rx)` BEFORE
-// connecting, stores `tx` in the `ConnHandle`, and lends `&mut rx` to the connection
-// loop. So `tx`/`rx`/`connId` outlive any single socket — the precondition for a
-// Phase 3 reconnect that keeps delivering queued sends.
+// connecting, stores `tx` in the `ConnHandle`, and lends `rx` to the supervising
+// reconnect loop. So `tx`/`rx`/`connId` outlive any single socket — the precondition
+// for a reconnect that keeps delivering queued sends.
+//
+// Each handle also holds a `CancellationToken` (F7). `disconnect` fires it so teardown
+// is instant whether the socket is idle-connected OR mid-backoff — and never reconnects.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,15 +16,17 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
-use super::connection::{run_connection, status_connected};
+use super::cancel::Cancel;
+use super::reconnect::supervise;
 use super::request::build_request;
-use super::types::{ChannelMsg, ConnId, ConnStatus, ConnStatusKind, ConnectConfig};
+use super::types::{ChannelMsg, ConnId, ConnectConfig};
 use crate::error::AppError;
 
 const SEND_BUFFER: usize = 256;
 
 struct ConnHandle {
     tx: mpsc::Sender<Message>,
+    cancel: Cancel,
 }
 
 #[derive(Default)]
@@ -44,12 +49,13 @@ impl WsManager {
 
         let conn_id = (self.next_id.fetch_add(1, Ordering::Relaxed) + 1).to_string();
         let (tx, rx) = mpsc::channel::<Message>(SEND_BUFFER);
-        self.conns.lock().await.insert(conn_id.clone(), ConnHandle { tx });
+        let cancel = Cancel::new();
+        self.conns.lock().await.insert(conn_id.clone(), ConnHandle { tx, cancel: cancel.clone() });
 
         let conns = self.conns.clone();
         let id = conn_id.clone();
         tauri::async_runtime::spawn(async move {
-            supervise(cfg, rx, emit, id.clone()).await;
+            supervise(cfg, rx, emit, id.clone(), cancel).await;
             // Self-cleanup: drop the handle once the task exits so the map never grows.
             conns.lock().await.remove(&id);
         });
@@ -63,11 +69,14 @@ impl WsManager {
         handle.tx.send(Message::Text(payload.into())).await.map_err(|e| AppError::Send(e.to_string()))
     }
 
-    /// Graceful disconnect: drop the sender so the loop's `rx.recv()` returns `None`
-    /// and the task closes the socket cleanly. The supervisor's self-cleanup removes
-    /// the (already-removed) entry harmlessly.
+    /// Explicit disconnect: cancel the token so the supervisor tears down instantly
+    /// (even mid-backoff) and stops reconnecting, then drop the handle. The
+    /// supervisor's self-cleanup removes the (already-removed) entry harmlessly.
     pub async fn disconnect(&self, conn_id: &str) -> Result<(), AppError> {
-        self.conns.lock().await.remove(conn_id);
+        let mut conns = self.conns.lock().await;
+        if let Some(handle) = conns.remove(conn_id) {
+            handle.cancel.cancel();
+        }
         Ok(())
     }
 
@@ -75,59 +84,13 @@ impl WsManager {
         self.conns.lock().await.len()
     }
 
-    /// Synchronous teardown for window-close (drops every sender → all tasks exit).
+    /// Synchronous teardown for window-close: cancel every token (so any task mid-
+    /// backoff stops reconnecting) and drop every sender, then clear the map.
     pub fn shutdown_all(&self) {
-        self.conns.blocking_lock().clear();
-    }
-}
-
-fn disconnected(conn_id: &str, reason: Option<String>, code: Option<u16>) -> ConnStatus {
-    let mut s = ConnStatus::new(conn_id, ConnStatusKind::Disconnected);
-    s.reason = reason;
-    s.code = code;
-    s
-}
-
-/// Scrub any secret header VALUE out of an outbound message so a token can never ride
-/// an error/reason string back to the webview, even if some lower layer echoed it.
-fn scrub(mut s: String, cfg: &ConnectConfig) -> String {
-    for (name, value) in &cfg.headers {
-        if super::types::is_sensitive_header(name) && !value.is_empty() {
-            s = s.replace(value.as_str(), "***");
+        let mut conns = self.conns.blocking_lock();
+        for handle in conns.values() {
+            handle.cancel.cancel();
         }
-    }
-    s
-}
-
-async fn supervise<E>(cfg: ConnectConfig, mut rx: mpsc::Receiver<Message>, emit: E, conn_id: ConnId)
-where
-    E: Fn(ChannelMsg) + Send + Sync + 'static,
-{
-    emit(ChannelMsg::Status { status: ConnStatus::new(&conn_id, ConnStatusKind::Connecting) });
-
-    // Validated in `connect`, so this only fails on a transient parse edge — treat as
-    // a connect failure.
-    let request = match build_request(&cfg) {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = scrub(e.to_string(), &cfg);
-            emit(ChannelMsg::Error { message: msg.clone(), code: None });
-            emit(ChannelMsg::Status { status: disconnected(&conn_id, Some(msg), None) });
-            return;
-        }
-    };
-
-    match tokio_tungstenite::connect_async(request).await {
-        Ok((ws, _resp)) => {
-            emit(ChannelMsg::Status { status: status_connected(&conn_id) });
-            let outcome = run_connection(ws, &mut rx, |m| emit(m)).await;
-            let reason = outcome.reason.map(|r| scrub(r, &cfg));
-            emit(ChannelMsg::Status { status: disconnected(&conn_id, reason, outcome.code) });
-        }
-        Err(e) => {
-            let msg = scrub(e.to_string(), &cfg);
-            emit(ChannelMsg::Error { message: msg.clone(), code: None });
-            emit(ChannelMsg::Status { status: disconnected(&conn_id, Some(msg), None) });
-        }
+        conns.clear();
     }
 }

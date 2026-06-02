@@ -294,7 +294,20 @@ body { overflow: hidden; }
 .status-chip.connected .conn-dot { background: var(--leaf); box-shadow: 0 0 0 3px var(--leaf-12); }
 .status-chip.connecting { background: var(--solar-12); color: #8a6310; }
 .status-chip.connecting .conn-dot { background: var(--solar); animation: pulse 0.8s infinite; }
+.status-chip.reconnecting { background: var(--solar-12); color: #8a6310; }
+.status-chip.reconnecting .conn-dot { background: var(--solar); animation: pulse 0.8s infinite; }
 .status-timer { font-family: var(--font-mono); font-size: var(--fs-11); opacity: 0.85; }
+.conn-rtt { font-family: var(--font-mono); font-size: var(--fs-11); opacity: 0.7; padding-left: 6px; border-left: 1px solid currentColor; }
+
+/* TLS-verification-disabled markers (footgun, deliberately loud) */
+.tls-badge {
+  display: inline-flex; align-items: center; flex: 0 0 auto; margin-left: 8px;
+  padding: 4px 8px; border-radius: var(--radius-sm); background: var(--rust-12); color: var(--rust);
+  font: 600 var(--fs-11)/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.set-row .tls-badge { margin-left: 8px; padding: 2px 6px; }
+.toggle.danger.on { background: var(--rust); }
+.danger-note { color: var(--rust); border-left: 2px solid var(--rust); padding-left: 10px; }
 
 .ws-tabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--raised); }
 .ws-tab {
@@ -410,7 +423,7 @@ body { overflow: hidden; }
 .auth-note .mono { color: var(--char); }
 .set-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px; border-bottom: 1px solid var(--divider); font: var(--p-sm); max-width: 480px; }
 .set-val { color: var(--char); }
-.toggle { width: 38px; height: 22px; border-radius: var(--radius-pill); background: var(--mist); position: relative; transition: background var(--dur-hover) var(--ease); }
+.toggle { width: 38px; height: 22px; border: 0; padding: 0; cursor: pointer; border-radius: var(--radius-pill); background: var(--mist); position: relative; transition: background var(--dur-hover) var(--ease); }
 .toggle.on { background: var(--accent); }
 .toggle .knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left var(--dur-hover) var(--ease); }
 .toggle.on .knob { left: 18px; }

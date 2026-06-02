@@ -67,6 +67,8 @@ export function WsWorkspace(props: WsWorkspaceProps) {
         item={item}
         status={status}
         elapsed={elapsed}
+        rttMs={conn.rttMs}
+        insecureTls={meta.insecureTls}
         onConnect={onConnect}
         onDisconnect={onDisconnect}
         onUrl={onUrl}
@@ -137,7 +139,7 @@ export function WsWorkspace(props: WsWorkspaceProps) {
       )}
       {tab === "headers" && <HeadersPane meta={meta} onChange={onMeta} />}
       {tab === "auth" && <AuthPane meta={meta} onChange={onMeta} />}
-      {tab === "settings" && <SettingsPane />}
+      {tab === "settings" && <SettingsPane meta={meta} onChange={onMeta} />}
 
       {tab === "messages" && (
         <Composer draft={draft} setDraft={setDraft} connected={connected} onSend={onSend} fmt={fmt} onFmt={onFmt} />

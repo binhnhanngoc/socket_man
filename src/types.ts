@@ -54,6 +54,8 @@ export interface ConnState {
   status: import("./transport/transport").ConnStatusKind;
   frames: import("./transport/transport").Frame[];
   connectedAt: number | null;
+  /** Last heartbeat round-trip time (ms), reported by the Rust transport. */
+  rttMs?: number;
 }
 
 export type ConnMap = Record<string, ConnState>;
@@ -76,6 +78,10 @@ export interface ConnMeta {
   headers: HeaderRow[];
   authType: AuthType;
   authToken: string;
+  /** Auto-reconnect on/off (Settings pane). Default on. */
+  reconnect: boolean;
+  /** Disable ALL TLS verification for this connection (footgun; default off). */
+  insecureTls: boolean;
 }
 
 export type ConnMetaMap = Record<string, ConnMeta>;

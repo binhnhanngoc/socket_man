@@ -6,28 +6,64 @@
 // and the single-task `select!` loop running over a real TLS (`wss://`) stream.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::HeaderMap;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_hdr_async, client_async};
 
-use socketman_lib::ws::connection::run_connection;
+use socketman_lib::ws::cancel::Cancel;
+use socketman_lib::ws::connection::{run_connection, RunEnd, RunParams};
 use socketman_lib::ws::manager::WsManager;
 use socketman_lib::ws::request::build_request;
-use socketman_lib::ws::types::{ChannelMsg, ConnectConfig, Frame};
+use socketman_lib::ws::types::{ChannelMsg, ConnectConfig, Frame, ReconnectConfig};
 
 // ---- helpers ----
 
 fn cfg(url: String, pairs: &[(&str, &str)]) -> ConnectConfig {
     let headers = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
-    ConnectConfig { url, headers }
+    ConnectConfig { url, headers, ..Default::default() }
+}
+
+/// Same as `cfg` but with auto-reconnect OFF, so a dropped/failed socket surfaces a
+/// terminal `disconnected` instead of looping `reconnecting`.
+fn cfg_no_reconnect(url: String, pairs: &[(&str, &str)]) -> ConnectConfig {
+    ConnectConfig {
+        reconnect: ReconnectConfig { enabled: false, max_backoff_secs: 30 },
+        ..cfg(url, pairs)
+    }
+}
+
+/// RunParams for driving `run_connection` directly. `heartbeat` is caller-chosen so a
+/// test can force fast ping/dead-detection; coalesce is the production 80ms.
+fn run_params(heartbeat: Duration) -> RunParams {
+    RunParams {
+        conn_id: "test".into(),
+        heartbeat,
+        coalesce: Duration::from_millis(80),
+        cancel: Cancel::new(),
+    }
+}
+
+/// The ordered discriminants of an emit log: `connecting`/`connected`/`reconnecting`/
+/// `disconnected` for statuses, `frames` / `error` otherwise. Used to assert ordering.
+fn msg_kinds(log: &Log) -> Vec<String> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .map(|m| match m {
+            ChannelMsg::Status { status } => serde_json::to_value(status).unwrap()["status"].as_str().unwrap().to_string(),
+            ChannelMsg::Frames { .. } => "frames".to_string(),
+            ChannelMsg::Error { .. } => "error".to_string(),
+        })
+        .collect()
 }
 
 type Log = Arc<Mutex<Vec<ChannelMsg>>>;
@@ -175,7 +211,9 @@ async fn secret_token_never_appears_in_emitted_messages() {
     let token = "Bearer super-secret-do-not-leak-42";
     let (log, sink) = collector();
     let manager = WsManager::default();
-    let id = manager.connect(cfg("ws://127.0.0.1:1/".into(), &[("Authorization", token)]), sink).await.unwrap();
+    // Reconnect OFF so the failed connect terminates with `disconnected` instead of
+    // looping `reconnecting`; the redaction guarantee is identical either way.
+    let id = manager.connect(cfg_no_reconnect("ws://127.0.0.1:1/".into(), &[("Authorization", token)]), sink).await.unwrap();
     let _ = id;
     // Poll until the failed connect has emitted its terminal disconnected status
     // (connection-refused timing varies by OS), up to a generous ceiling.
@@ -206,7 +244,9 @@ async fn queued_send_survives_socket_swap_with_stable_conn_id() {
     tx.send(Message::Text("{\"n\":1}".into())).await.unwrap();
     let log1 = Arc::new(Mutex::new(Vec::new()));
     let log1c = log1.clone();
-    let _ = timeout(Duration::from_secs(2), run_connection(ws1, &mut rx, move |m| log1c.lock().unwrap().push(m))).await.expect("round 1 finished");
+    let mut sink1 = move |m| log1c.lock().unwrap().push(m);
+    let p1 = run_params(Duration::from_secs(30));
+    let _ = timeout(Duration::from_secs(2), run_connection(ws1, &mut rx, &mut sink1, &p1)).await.expect("round 1 finished");
     assert_eq!(conn_id, "42");
 
     // Between rounds (socket down): queue a send. It buffers in rx, NOT lost.
@@ -217,7 +257,9 @@ async fn queued_send_survives_socket_swap_with_stable_conn_id() {
     let ws2 = connect_plain(&url2, &[]).await;
     let log2 = Arc::new(Mutex::new(Vec::new()));
     let log2c = log2.clone();
-    let _ = timeout(Duration::from_secs(2), run_connection(ws2, &mut rx, move |m| log2c.lock().unwrap().push(m))).await.expect("round 2 finished");
+    let mut sink2 = move |m| log2c.lock().unwrap().push(m);
+    let p2 = run_params(Duration::from_secs(30));
+    let _ = timeout(Duration::from_secs(2), run_connection(ws2, &mut rx, &mut sink2, &p2)).await.expect("round 2 finished");
 
     let frames: Vec<Frame> = log2
         .lock()
@@ -254,7 +296,9 @@ async fn single_task_select_runs_over_wss_with_custom_header() {
     let _tx = tx;
     let log = Arc::new(Mutex::new(Vec::new()));
     let logc = log.clone();
-    let _ = timeout(Duration::from_secs(3), run_connection(ws, &mut rx, move |m| logc.lock().unwrap().push(m))).await.expect("tls loop finished");
+    let mut sink = move |m| logc.lock().unwrap().push(m);
+    let params = run_params(Duration::from_secs(30));
+    let _ = timeout(Duration::from_secs(3), run_connection(ws, &mut rx, &mut sink, &params)).await.expect("tls loop finished");
 
     let headers = captured.lock().unwrap().clone().expect("tls server saw upgrade");
     assert_eq!(headers.get("authorization").unwrap(), "Bearer tls_secret_token");
@@ -266,4 +310,293 @@ async fn single_task_select_runs_over_wss_with_custom_header() {
         .flatten()
         .collect();
     assert!(frames.iter().any(|f| f.body["hello"] == "tls"), "expected tls echo, frames: {frames:?}");
+}
+
+// ---- Phase 3: reliability servers ----
+
+/// Unified-loop echo server (no `.split()`) that explicitly answers our outbound
+/// pings with a pong — so the heartbeat RTT path can be exercised deterministically.
+async fn spawn_ping_aware_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                if let Ok(mut ws) = accept_hdr_async(stream, |_: &Request, r: Response| Ok::<_, ErrorResponse>(r)).await {
+                    while let Some(Ok(msg)) = ws.next().await {
+                        match msg {
+                            Message::Text(_) | Message::Binary(_) => {
+                                if ws.send(msg).await.is_err() { break; }
+                            }
+                            Message::Ping(p) => {
+                                let _ = ws.send(Message::Pong(p)).await;
+                            }
+                            Message::Close(_) => break,
+                            _ => {}
+                        }
+                    }
+                }
+            });
+        }
+    });
+    format!("ws://{addr}/")
+}
+
+/// Accepts the upgrade then goes silent — never reads, never pongs. Holds the socket
+/// open so the client's dead-socket detector (missed pong) is what ends the loop.
+async fn spawn_silent_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        if let Ok((stream, _)) = listener.accept().await {
+            if let Ok(ws) = accept_hdr_async(stream, |_: &Request, r: Response| Ok::<_, ErrorResponse>(r)).await {
+                // Keep the stream alive but inert (no reads ⇒ no auto-pong).
+                sleep(Duration::from_secs(30)).await;
+                drop(ws);
+            }
+        }
+    });
+    format!("ws://{addr}/")
+}
+
+/// Drops the FIRST connection immediately (forces one reconnect), then serves later
+/// connections as a stable ping-aware echo. Returns the accept counter.
+async fn spawn_drop_once_then_stable_server() -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let counter = accepts.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let idx = counter.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                if let Ok(mut ws) = accept_hdr_async(stream, |_: &Request, r: Response| Ok::<_, ErrorResponse>(r)).await {
+                    if idx == 0 {
+                        let _ = ws.close(None).await; // drop once → triggers reconnect
+                    } else {
+                        while let Some(Ok(msg)) = ws.next().await {
+                            match msg {
+                                Message::Text(_) | Message::Binary(_) => {
+                                    if ws.send(msg).await.is_err() { break; }
+                                }
+                                Message::Ping(p) => {
+                                    let _ = ws.send(Message::Pong(p)).await;
+                                }
+                                Message::Close(_) => break,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    (format!("ws://{addr}/"), accepts)
+}
+
+/// On connect, sends a burst of text frames then closes — for the ordering contract.
+async fn spawn_burst_then_close_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        if let Ok((stream, _)) = listener.accept().await {
+            if let Ok(mut ws) = accept_hdr_async(stream, |_: &Request, r: Response| Ok::<_, ErrorResponse>(r)).await {
+                for n in 0..5 {
+                    if ws.send(Message::Text(format!("{{\"n\":{n}}}").into())).await.is_err() { break; }
+                }
+                let _ = ws.close(None).await;
+            }
+        }
+    });
+    format!("ws://{addr}/")
+}
+
+/// Accepts then closes each connection immediately, counting accepts — used to prove a
+/// disconnect during backoff stops further reconnect attempts.
+async fn spawn_count_accept_close_server() -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let counter = accepts.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            counter.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                if let Ok(mut ws) = accept_hdr_async(stream, |_: &Request, r: Response| Ok::<_, ErrorResponse>(r)).await {
+                    let _ = ws.close(None).await;
+                }
+            });
+        }
+    });
+    (format!("ws://{addr}/"), accepts)
+}
+
+// ---- Phase 3: reliability tests ----
+
+#[tokio::test]
+async fn reconnect_after_drop_reuses_conn_and_send_path() {
+    let (url, accepts) = spawn_drop_once_then_stable_server().await;
+    let (log, sink) = collector();
+    let manager = WsManager::default();
+
+    let conn_id = manager.connect(cfg(url, &[]), sink).await.expect("connect ok");
+
+    // First connect drops → supervisor emits reconnecting, waits backoff (~1s), reconnects.
+    // Poll for the SECOND connected (after a reconnecting) up to a generous ceiling.
+    let mut reconnected = false;
+    for _ in 0..40 {
+        let st = statuses(&log);
+        if st.iter().filter(|s| *s == "connected").count() >= 2 && st.contains(&"reconnecting".to_string()) {
+            reconnected = true;
+            break;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    assert!(reconnected, "expected reconnecting→connected, got {:?}", statuses(&log));
+    assert!(accepts.load(Ordering::SeqCst) >= 2, "server should have accepted a reconnect");
+
+    // The SAME connId still drives the send path after the reconnect.
+    manager.send(&conn_id, "{\"action\":\"ping\",\"v\":7}".into()).await.unwrap();
+    sleep(Duration::from_millis(250)).await;
+    assert!(
+        in_frames(&log).iter().any(|f| matches!(f.dir, socketman_lib::ws::types::FrameDir::In) && f.body["v"] == 7),
+        "echoed frame after reconnect not seen"
+    );
+
+    manager.disconnect(&conn_id).await.unwrap();
+}
+
+#[tokio::test]
+async fn heartbeat_reports_rtt() {
+    let url = spawn_ping_aware_server().await;
+    let ws = connect_plain(&url, &[]).await;
+    let (tx, mut rx) = mpsc::channel::<Message>(16);
+    let _tx = tx; // keep the sender alive so rx never closes during the probe
+
+    let (log, _sink) = collector();
+    let logc = log.clone();
+    let mut sink = move |m| logc.lock().unwrap().push(m);
+    // Fast heartbeat so a pong-driven RTT status arrives well within the test window.
+    let params = run_params(Duration::from_millis(120));
+    let cancel = params.cancel.clone();
+
+    let handle = tokio::spawn(async move {
+        run_connection(ws, &mut rx, &mut sink, &params).await;
+    });
+
+    // Wait for at least one Status carrying rttMs.
+    let mut saw_rtt = false;
+    for _ in 0..30 {
+        let has_rtt = log.lock().unwrap().iter().any(|m| matches!(m, ChannelMsg::Status { status }
+            if serde_json::to_value(status).unwrap().get("rttMs").is_some()));
+        if has_rtt {
+            saw_rtt = true;
+            break;
+        }
+        sleep(Duration::from_millis(80)).await;
+    }
+    cancel.cancel();
+    let _ = timeout(Duration::from_secs(2), handle).await;
+    assert!(saw_rtt, "expected a Status with rttMs from the heartbeat pong");
+}
+
+#[tokio::test]
+async fn dead_socket_missed_pong_drops_for_reconnect() {
+    let url = spawn_silent_server().await;
+    let ws = connect_plain(&url, &[]).await;
+    let (tx, mut rx) = mpsc::channel::<Message>(16);
+    let _tx = tx;
+
+    let (_log, _sink) = collector();
+    let mut sink = |_m| {};
+    // Short heartbeat: ping at ~120ms, no pong, dead detected at ~240ms.
+    let params = run_params(Duration::from_millis(120));
+
+    let end = timeout(Duration::from_secs(2), run_connection(ws, &mut rx, &mut sink, &params))
+        .await
+        .expect("dead-detection should end the loop well within 2s");
+    match end {
+        RunEnd::Dropped(o) => assert_eq!(o.reason.as_deref(), Some("heartbeat timeout")),
+        RunEnd::Cancelled => panic!("a missed pong must be a Dropped (reconnectable), not Cancelled"),
+    }
+}
+
+#[tokio::test]
+async fn frames_never_precede_connected_status() {
+    // Ordering contract (F5): the frontend must never receive Frames for a conn whose
+    // status is not yet `connected`. With reconnect OFF the sequence is terminal.
+    let url = spawn_burst_then_close_server().await;
+    let (log, sink) = collector();
+    let manager = WsManager::default();
+    let conn_id = manager.connect(cfg_no_reconnect(url, &[]), sink).await.unwrap();
+
+    for _ in 0..30 {
+        if msg_kinds(&log).contains(&"disconnected".to_string()) { break; }
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    let kinds = msg_kinds(&log);
+    let first_connected = kinds.iter().position(|k| k == "connected").expect("a connected status");
+    let first_frames = kinds.iter().position(|k| k == "frames");
+    if let Some(fi) = first_frames {
+        assert!(fi > first_connected, "frames at {fi} preceded connected at {first_connected}: {kinds:?}");
+    }
+    assert_eq!(kinds.last().map(String::as_str), Some("disconnected"), "kinds: {kinds:?}");
+    let _ = conn_id;
+}
+
+#[tokio::test]
+async fn disconnect_during_backoff_is_instant_and_stops_reconnect() {
+    let (url, accepts) = spawn_count_accept_close_server().await;
+    let (log, sink) = collector();
+    let manager = WsManager::default();
+    let conn_id = manager.connect(cfg(url, &[]), sink).await.unwrap();
+
+    // Let it connect, get dropped, and enter the (~1s) backoff sleep.
+    sleep(Duration::from_millis(400)).await;
+    let accepts_before = accepts.load(Ordering::SeqCst);
+    assert!(accepts_before >= 1, "server should have accepted the first connect");
+    assert!(statuses(&log).contains(&"reconnecting".to_string()), "should be mid-backoff");
+
+    // Disconnect mid-backoff → teardown must be near-instant and emit disconnected.
+    let t0 = Instant::now();
+    manager.disconnect(&conn_id).await.unwrap();
+    let mut torn_down = false;
+    for _ in 0..20 {
+        if statuses(&log).contains(&"disconnected".to_string()) {
+            torn_down = true;
+            break;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    assert!(torn_down, "no disconnected after cancel: {:?}", statuses(&log));
+    assert!(t0.elapsed() < Duration::from_millis(300), "teardown took {:?} (should be instant)", t0.elapsed());
+
+    // And NO further reconnect was attempted past the point of cancel.
+    sleep(Duration::from_millis(400)).await;
+    assert_eq!(accepts.load(Ordering::SeqCst), accepts_before, "a reconnect was attempted after disconnect");
+}
+
+#[tokio::test]
+#[ignore = "spins up a self-signed wss server; run explicitly with `cargo test -- --ignored`"]
+async fn self_signed_connects_only_with_insecure_toggle() {
+    // Secure (default): the self-signed cert is not in the trust store ⇒ connect fails.
+    let (addr_secure, _cert_secure) = tls::spawn_tls_echo_server().await;
+    let secure = ConnectConfig { url: format!("wss://localhost:{}/", addr_secure.port()), ..Default::default() };
+    assert!(
+        socketman_lib::ws::tls::connect_ws(&secure).await.is_err(),
+        "strict TLS must reject a self-signed cert"
+    );
+
+    // Insecure toggle ON: verification disabled ⇒ the same self-signed endpoint connects.
+    let (addr_insecure, _cert_insecure) = tls::spawn_tls_echo_server().await;
+    let insecure = ConnectConfig {
+        url: format!("wss://localhost:{}/", addr_insecure.port()),
+        insecure_tls: true,
+        ..Default::default()
+    };
+    assert!(
+        socketman_lib::ws::tls::connect_ws(&insecure).await.is_ok(),
+        "insecure_tls=true must accept the self-signed cert"
+    );
 }

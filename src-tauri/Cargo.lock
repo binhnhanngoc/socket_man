@@ -2993,6 +2993,7 @@ dependencies = [
 name = "socketman"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "futures-util",
  "rcgen",
  "rustls",
