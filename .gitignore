@@ -6,6 +6,9 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 
+# Local tools (downloaded WebDriver binaries for e2e)
+.tools/
+
 # Logs
 *.log
 npm-debug.log*
