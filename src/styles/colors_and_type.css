@@ -1,0 +1,234 @@
+/* ============================================================
+   Atomiton Design Tokens
+   Single source of truth for color, type, spacing, shadow,
+   radius, and motion. Import this file at the root of any
+   surface (product, marketing, slides, docs).
+   ============================================================ */
+
+/* ---------- Web fonts (self-hosted via @fontsource) ---------- */
+/* Display:   Instrument Serif  — italic-forward editorial serif
+   UI/body:   Geist            — clean grotesque sans
+   Mono:      JetBrains Mono   — engineering / data mono
+   Imported in src/main.tsx (no CDN @import): offline-first + tight CSP.
+   The "* Variable" families below are the @fontsource-variable family names. */
+
+:root {
+  /* =========================================================
+     COLOR — Neutrals (warm paper-and-ink scale)
+     ========================================================= */
+  --paper:        #F5F1E8;  /* default surface */
+  --paper-90:     #F5F1E8E6;
+  --linen:        #FAF7F0;  /* raised surface, modal */
+  --bone:         #EDE6D7;  /* subtle panel, hero step */
+  --fog:          #DDD6C7;  /* divider, hairline emphasis */
+  --mist:         #C9C2B5;  /* default border */
+  --stone:        #8A8378;  /* tertiary text, axis labels */
+  --char:         #4A453E;  /* secondary text */
+  --ink:          #1C1B17;  /* primary text, near-black warm */
+  --coal:         #2A2725;  /* carbon, deep ink alt */
+
+  /* =========================================================
+     COLOR — Brand (rust family, the only saturated hue)
+     ========================================================= */
+  --rust:         #C44D1E;  /* primary accent — terracotta */
+  --rust-dk:      #9A3D17;  /* hover/press deepen */
+  --ember:        #E27244;  /* lighter rust, illustration */
+  --clay:         #8B5A3C;  /* deeper industrial earth */
+  --sand:         #D9B384;  /* warm soft accent */
+  --rust-30:      #C44D1E4D; /* focus ring */
+  --rust-12:      #C44D1E1F; /* tint/bg behind rust badges */
+
+  /* =========================================================
+     COLOR — Semantic (domain-flavored)
+     ========================================================= */
+  --leaf:         #5D7A3C;  /* positive / sustainability gain */
+  --leaf-12:      #5D7A3C1F;
+  --solar:        #E8A82C;  /* warning / energy */
+  --solar-12:     #E8A82C1F;
+  --pond:         #3F6B72;  /* info / water */
+  --pond-12:      #3F6B721F;
+  --flare:        #C8341B;  /* critical / alert */
+  --flare-12:     #C8341B1F;
+
+  /* =========================================================
+     TYPE — Families
+     ========================================================= */
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-sans:    "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono:    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* =========================================================
+     TYPE — Scale (px-anchored, designed for product chrome)
+     Use semantic vars below in most cases.
+     ========================================================= */
+  --fs-10:   10px;
+  --fs-11:   11px;
+  --fs-12:   12px;
+  --fs-13:   13px;
+  --fs-14:   14px;
+  --fs-15:   15px;
+  --fs-16:   16px;
+  --fs-18:   18px;
+  --fs-20:   20px;
+  --fs-24:   24px;
+  --fs-28:   28px;
+  --fs-32:   32px;
+  --fs-40:   40px;
+  --fs-48:   48px;
+  --fs-64:   64px;
+  --fs-80:   80px;
+  --fs-96:   96px;
+  --fs-128: 128px;
+
+  /* =========================================================
+     TYPE — Semantic roles
+     ========================================================= */
+  /* Editorial / display (marketing, slides, big moments) */
+  --h-display-1: 700 var(--fs-96)/0.95 var(--font-display);
+  --h-display-2: 400 var(--fs-80)/1.0  var(--font-display);
+  --h-display-3: 400 var(--fs-64)/1.05 var(--font-display);
+
+  /* Product / section heads (sans) */
+  --h1: 600 var(--fs-32)/1.2 var(--font-sans);
+  --h2: 600 var(--fs-24)/1.25 var(--font-sans);
+  --h3: 600 var(--fs-18)/1.3 var(--font-sans);
+  --h4: 600 var(--fs-15)/1.35 var(--font-sans);
+  --eyebrow: 500 var(--fs-11)/1 var(--font-mono);  /* mono, tracked, uppercase */
+
+  /* Body */
+  --p-lg: 400 var(--fs-18)/1.55 var(--font-sans);
+  --p:    400 var(--fs-15)/1.55 var(--font-sans);
+  --p-sm: 400 var(--fs-13)/1.5  var(--font-sans);
+  --p-xs: 400 var(--fs-12)/1.4  var(--font-sans);
+
+  /* Mono — data, identifiers, code, units */
+  --data-lg:  500 var(--fs-32)/1.1 var(--font-mono);
+  --data:     500 var(--fs-20)/1.2 var(--font-mono);
+  --data-sm:  500 var(--fs-13)/1.3 var(--font-mono);
+  --code:     400 var(--fs-13)/1.5 var(--font-mono);
+  --unit:     500 var(--fs-11)/1   var(--font-mono);
+
+  /* UI controls */
+  --label:  500 var(--fs-12)/1.2 var(--font-sans);
+  --btn:    500 var(--fs-13)/1   var(--font-sans);
+  --btn-lg: 500 var(--fs-15)/1   var(--font-sans);
+
+  /* Tracking */
+  --tracking-tight: -0.02em;
+  --tracking-snug:  -0.01em;
+  --tracking-eyebrow: 0.08em;
+  --tracking-mono:  -0.01em;
+
+  /* =========================================================
+     SPACING (4px base)
+     ========================================================= */
+  --space-1:    4px;
+  --space-2:    8px;
+  --space-3:   12px;
+  --space-4:   16px;
+  --space-5:   20px;
+  --space-6:   24px;
+  --space-8:   32px;
+  --space-10:  40px;
+  --space-12:  48px;
+  --space-16:  64px;
+  --space-24:  96px;
+  --space-32: 128px;
+
+  /* =========================================================
+     RADII
+     ========================================================= */
+  --radius-bot:    4px;   /* BOT tile — deliberately square */
+  --radius-sm:     6px;   /* button, input */
+  --radius-md:    10px;   /* card, panel */
+  --radius-lg:    14px;   /* sheet, modal */
+  --radius-pill: 999px;
+
+  /* =========================================================
+     SHADOWS (warm, short)
+     ========================================================= */
+  --shadow-xs: 0 1px 0 rgba(28, 27, 23, 0.04);
+  --shadow-sm: 0 1px 2px rgba(28, 27, 23, 0.06), 0 1px 0 rgba(28, 27, 23, 0.03);
+  --shadow-md: 0 2px 6px rgba(28, 27, 23, 0.06), 0 1px 2px rgba(28, 27, 23, 0.04);
+  --shadow-lg: 0 8px 24px rgba(28, 27, 23, 0.08), 0 2px 6px rgba(28, 27, 23, 0.04);
+  --shadow-ring: 0 0 0 2px var(--paper), 0 0 0 4px var(--rust-30);
+
+  /* =========================================================
+     MOTION
+     ========================================================= */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* celebratory only */
+  --dur-hover:   120ms;
+  --dur-press:    90ms;
+  --dur-panel:   240ms;
+  --dur-page:    320ms;
+
+  /* =========================================================
+     LAYOUT
+     ========================================================= */
+  --content-max:    1200px;
+  --sidebar-w:       240px;
+  --topnav-h:         60px;
+  --row-h-dense:      32px;
+  --row-h-comfy:      40px;
+
+  /* =========================================================
+     PATTERNS
+     ========================================================= */
+  --pattern-dot-grid:
+    radial-gradient(circle at 1px 1px, var(--mist) 1px, transparent 0);
+}
+
+/* ----------------------------------------------------------
+   Base element styles
+   Reach for the semantic roles above; these are sensible
+   defaults so unstyled HTML renders on-brand.
+   ---------------------------------------------------------- */
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--p);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1 { font: var(--h1); letter-spacing: var(--tracking-snug); margin: 0; }
+h2 { font: var(--h2); letter-spacing: var(--tracking-snug); margin: 0; }
+h3 { font: var(--h3); margin: 0; }
+h4 { font: var(--h4); margin: 0; }
+p  { font: var(--p);  margin: 0; }
+
+/* Editorial display utilities */
+.display-1 { font: var(--h-display-1); letter-spacing: var(--tracking-tight); }
+.display-2 { font: var(--h-display-2); letter-spacing: var(--tracking-tight); }
+.display-3 { font: var(--h-display-3); letter-spacing: var(--tracking-tight); }
+.display-italic { font-style: italic; }
+
+/* Eyebrow — tracked, uppercase, mono. Used above section headings. */
+.eyebrow {
+  font: var(--eyebrow);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--stone);
+}
+
+/* Mono numerics */
+.data    { font: var(--data); }
+.data-lg { font: var(--data-lg); }
+.data-sm { font: var(--data-sm); }
+.unit    { font: var(--unit); color: var(--stone); text-transform: lowercase; }
+code, .code { font: var(--code); }
+
+/* Links — earnest, not flashy */
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--mist);
+  transition: text-decoration-color var(--dur-hover) var(--ease);
+}
+a:hover { text-decoration-color: var(--rust); }
+
+::selection { background: var(--rust-12); color: var(--ink); }

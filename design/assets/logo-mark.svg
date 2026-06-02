@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-label="Atomiton mark">
+  
+  <circle cx="32" cy="32" r="4" fill="#C44D1E"></circle>
+  
+  <ellipse cx="32" cy="32" rx="26" ry="10" stroke="#1C1B17" stroke-width="1.5" transform="rotate(-20 32 32)"></ellipse>
+  
+  <ellipse cx="32" cy="32" rx="26" ry="10" stroke="#1C1B17" stroke-width="1.5" transform="rotate(20 32 32)"></ellipse>
+  
+  <ellipse cx="32" cy="32" rx="26" ry="10" stroke="#1C1B17" stroke-width="1.5" transform="rotate(90 32 32)"></ellipse>
+  
+  <circle cx="56" cy="23" r="2.2" fill="#1C1B17"></circle>
+  <circle cx="9" cy="38" r="2.2" fill="#1C1B17"></circle>
+  <circle cx="36" cy="6" r="2.2" fill="#1C1B17"></circle>
+</svg>

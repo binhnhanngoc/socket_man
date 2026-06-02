@@ -1,0 +1,27 @@
+[package]
+name = "socketman"
+version = "0.1.0"
+description = "SocketMan — Tauri 2 + Rust WebSocket/HTTP workbench"
+authors = ["SocketMan"]
+edition = "2021"
+rust-version = "1.78"
+
+# The library is what Tauri's mobile/desktop entrypoints link against.
+[lib]
+name = "socketman_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# Phase 1 keeps the dependency surface minimal: just enough to open a window and
+# (de)serialize future command payloads. The WS/HTTP/keychain crates land in the
+# Phase 1.5 backend skeleton + Phases 2/4 — pinned with Cargo.lock committed there.
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# This feature is used for production builds where `devUrl` is not used.
+custom-protocol = ["tauri/custom-protocol"]
