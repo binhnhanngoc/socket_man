@@ -18,6 +18,7 @@ use ws::manager::WsManager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(WsManager::default())
         .manage(HttpClient::new().expect("failed to build HTTP client"))
         .setup(|app| {
@@ -29,6 +30,7 @@ pub fn run() {
         })
         // Handlers alphabetized, one per line. (secret_get is NEVER registered — S3.)
         .invoke_handler(tauri::generate_handler![
+            commands::export_write,
             commands::history_append,
             commands::http_send,
             commands::secret_delete,
