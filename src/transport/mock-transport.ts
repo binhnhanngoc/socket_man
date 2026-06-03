@@ -147,4 +147,27 @@ export const mockTransport: Transport = {
     }
     return Promise.resolve();
   },
+
+  // No native dialog in a browser/test env — derive the format from the suggested
+  // name's extension and trigger a Blob `<a download>`. Best-effort (URL.createObjectURL
+  // is unimplemented under jsdom) so Vitest stays hermetic; the export still "succeeds".
+  exportSave(suggestedName, _filters, contentFor) {
+    const ext = (suggestedName.split(".").pop() || "").toLowerCase();
+    const contents = contentFor(ext);
+    try {
+      if (typeof document !== "undefined" && typeof URL.createObjectURL === "function") {
+        const url = URL.createObjectURL(new Blob([contents], { type: "text/plain" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = suggestedName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      // browser/test fallback unavailable — treat as saved (content was produced).
+    }
+    return Promise.resolve(suggestedName);
+  },
 };

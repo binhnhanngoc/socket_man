@@ -71,7 +71,7 @@ function freshMeta(): ConnMeta {
 // Compose the per-item header rows + Auth pane into the outbound header map. Values
 // are env-resolved with skipSecret so a {{secret}} stays literal and is substituted
 // Rust-side at connect (Phase 5); non-secret {{vars}} resolve here.
-function composeHeaders(meta: ConnMeta | undefined, env: Environment | null): Record<string, string> {
+export function composeHeaders(meta: ConnMeta | undefined, env: Environment | null): Record<string, string> {
   const out: Record<string, string> = {};
   if (!meta) return out;
   for (const row of meta.headers) {

@@ -6,6 +6,7 @@
 // `await channel.onmessage(cb)` snippet is wrong; do not copy it.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import type { ConnStatus, Frame, HttpRequest, HttpResponse, SecretRefs, Transport } from "./transport";
 
 // Tauri converts camelCase JS arg keys to the snake_case Rust command params
@@ -70,5 +71,16 @@ export const tauriTransport: Transport = {
   },
   historyAppend(entry) {
     return invoke<void>("history_append", { entry });
+  },
+
+  async exportSave(suggestedName, filters, contentFor) {
+    // Pick the destination via the native dialog (dialog plugin), then write through
+    // the explicit `export_write` command — no fs-plugin scope is granted, so the only
+    // path the renderer can write is the one the user just chose here.
+    const path = await save({ defaultPath: suggestedName, filters });
+    if (!path) return null;
+    const ext = (path.split(".").pop() || "").toLowerCase();
+    await invoke<void>("export_write", { path, contents: contentFor(ext) });
+    return path;
   },
 };

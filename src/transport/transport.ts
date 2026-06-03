@@ -92,4 +92,16 @@ export interface Transport {
   secretDelete(envId: string, key: string): Promise<void>;
   /** Append one TEMPLATE-form entry to history (Rust caps + serializes it). */
   historyAppend(entry: unknown): Promise<void>;
+
+  // ---- export (Track 1) ----
+  /** Save text to a user-chosen file. Opens a native "Save As" dialog seeded with
+   *  `suggestedName` + `filters`; `contentFor(ext)` produces the bytes for the chosen
+   *  extension (lets one dialog offer e.g. .json AND .txt). Returns the written path,
+   *  or `null` if the user cancelled. Exports carry TEMPLATES only — never resolved
+   *  secret values. The mock transport (browser/Vitest) falls back to a Blob download. */
+  exportSave(
+    suggestedName: string,
+    filters: { name: string; extensions: string[] }[],
+    contentFor: (ext: string) => string
+  ): Promise<string | null>;
 }
