@@ -20,7 +20,10 @@ A desktop **WebSocket + HTTP workbench** built with **Tauri 2** — a React/Type
 - **HTTP client** — `reqwest` with `rustls` + platform cert verification, status/headers/body/timing, 16 MiB body cap, URL-stripped error messages.
 - **Keychain-backed secrets** — secrets live in the OS keychain (`keyring` 3). Only secret *keys* cross to Rust; values are resolved Rust-side on the outbound path. There is no `secret_get` command — the webview can never read secrets back.
 - **Atomic JSON persistence** — collections, environments, and history persisted via an atomic JSON store (unique-tmp + fsync + rename, corrupt-tolerant load).
-- **Format system** — JSON (gated lossless), plus view-only YAML/XML.
+- **Format system** — JSON (gated lossless), YAML/XML now swap to `js-yaml`/`fast-xml-parser` with **lossless YAML round-trip for JSON-object payloads** (XML remains best-effort).
+- **Toast notifications** — user-visible feedback for keychain errors, export status, and validation issues (no silent failures).
+- **Copy/Save/Export** — HTTP response bodies and WebSocket frame logs can be copied to clipboard or saved to disk via native dialog. Code-gen export (curl/fetch/wscat) from any request/connection (all templates, never resolved secrets).
+- **Search/filter + virtualization** — frame log filter by direction and text search with match count; windowed rendering preserves performance and sticky-to-bottom scroll.
 - **Per-connection TLS toggle** — native-roots strict by default; opt-in insecure mode (warned) for self-signed endpoints.
 - **History panel** — template-form request/connection history (secrets never logged).
 
@@ -28,8 +31,8 @@ A desktop **WebSocket + HTTP workbench** built with **Tauri 2** — a React/Type
 
 | Layer | Tech |
 |-------|------|
-| Shell | Tauri 2 |
-| Frontend | React 18 + TypeScript, Vite 6, Vitest |
+| Shell | Tauri 2 (+ dialog plugin for native save) |
+| Frontend | React 18 + TypeScript, Vite 6, Vitest; `@tanstack/react-virtual` (windowing), `js-yaml` (YAML), `fast-xml-parser` (XML) |
 | Backend | Rust — `tokio-tungstenite`, `reqwest` (rustls), `keyring` 3 |
 | Packaging | NSIS + MSI (Windows, current-user install) |
 
@@ -99,6 +102,7 @@ interface Transport {
   secretSet(envId, key, value): Promise<void>;   // no secretGet by design
   secretDelete(envId, key): Promise<void>;
   historyAppend(entry): Promise<void>;
+  exportSave(name, filters, contentFor): Promise<path | null>;  // native dialog + write
 }
 ```
 
@@ -110,7 +114,8 @@ interface Transport {
 2. No `secret_get` command — keychain reads are Rust-internal only.
 3. Logs keep templates; resolved secrets (including URL secrets) are never logged and are scrubbed from error strings.
 4. Tight CSP (`script-src 'self'`, no `unsafe-eval`/`unsafe-inline`), enforced by the build gate.
-5. The IPC surface is an explicit allowlist of 9 commands.
+5. The IPC surface is an explicit allowlist of 10 commands (including the new `export_write` — the only writable path is one the user just picked via the native save dialog).
+6. Exports carry **templates only** — `{{token}}` never resolved; code-gen snippets use literal secret tokens.
 
 ## Testing
 
@@ -124,7 +129,7 @@ interface Transport {
 - **Protocols:** WS + HTTP only — no SSE/Socket.IO/MQTT; text WS frames only (no binary).
 - **No Postman import** — own JSON format.
 - **TLS:** native-roots strict by default with an opt-in per-connection insecure toggle; no cert pinning.
-- **YAML/XML:** best-effort view-only; JSON is the lossless path.
+- **YAML/XML:** YAML is now lossless for JSON-object payloads (via `js-yaml` JSON_SCHEMA); XML remains best-effort (inherent data-model losses). JSON is the canonical lossless format.
 
 ## Documentation
 

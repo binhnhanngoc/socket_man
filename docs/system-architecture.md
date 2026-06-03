@@ -1,6 +1,6 @@
 # SocketMan System Architecture
 
-**Overview:** A Tauri 2 desktop app bridging a React/TypeScript UI with a Rust transport backend — a WebSocket/HTTP workbench. All seven build phases are complete: mock transport, real WS engine + IPC, WS reliability (auto-reconnect/heartbeat/RTT/TLS toggle), HTTP client, JSON persistence + OS-keychain secrets, SocketMan rebrand + history, and Windows packaging. A WebDriver e2e harness exercises the real WebView2↔Rust bridge. The only open acceptance item is a manual GUI install smoke test (cannot run headlessly).
+**Overview:** A Tauri 2 desktop app bridging a React/TypeScript UI with a Rust transport backend — a WebSocket/HTTP workbench. Seven core phases complete (mock transport → real WS engine + IPC → WS reliability → HTTP client → JSON persistence + OS keychain → rebrand + history → Windows packaging). Track 1 (UX & Polish) adds 5 phases: notifications, copy/save/export, search/filter + virtualization, code-gen, and lossless YAML via `js-yaml`. A WebDriver e2e harness exercises the real WebView2↔Rust bridge. The only open acceptance item is a manual GUI install smoke test (cannot run headlessly).
 
 ## Layered Architecture
 
@@ -162,6 +162,25 @@ and resolve `{{secretKey}}` tokens Rust-side, right on the way out (`storage/res
 - **Connections:** transient in-memory (not persisted).
 - **Prefs:** localStorage (`relay.tweaks` — dark/accent/density).
 
+## Export Seam (Track 1, Phase 2) — Implemented
+
+### exportSave (Dialog + Rust Write)
+
+The UI needs to save content (HTTP response, frame log) to the user's filesystem. The seam:
+
+1. **Frontend calls** `transport.exportSave(suggestedName, filters, contentFor)` — opens a native **Save As** dialog with `suggestedName` + file type `filters`.
+2. **User picks a path** — the dialog returns the path (or null if cancelled).
+3. **Frontend calls** `contentFor(ext)` to generate the bytes for the chosen extension (e.g., `.json` vs `.txt` for frame log exports).
+4. **Rust command** `export_write(path, contents)` writes the bytes to the user-picked path.
+
+**No fs plugin, narrowest scope:** The only writable path is the one the user just selected. The `dialog:allow-save` capability is the _sole_ file-write permission.
+
+**Security:** All exports carry TEMPLATES only (`{{token}}` never resolved, even in code-gen snippets).
+
+**Implementation:**
+- Real transport: Uses the `tauri_plugin_dialog` plugin (native file picker) + the new `export_write` Rust command.
+- Mock transport (browser/Vitest): Falls back to a Blob download via the browser's save-as mechanism.
+
 ## Transport Contract (TypeScript ↔ Rust) — Implemented
 
 ### WebSocket
@@ -234,6 +253,8 @@ HttpResponse {
 
 ## Phase Roadmap (all complete)
 
+### Core Phases (1–7)
+
 | Phase | Deliverable | Status | Key Changes |
 |-------|-------------|--------|------------|
 | 1 | UI ported, mock transport | ✅ Done | React/TS scaffold, format gates (JSON gated), secret-skip resolver, mock server |
@@ -243,6 +264,16 @@ HttpResponse {
 | 5 | Persistence + secrets | ✅ Done | Atomic JSON store (collections/envs/history), OS keychain (keyring 3), Rust-side secret resolution |
 | 6 | Rebrand + history | ✅ Done | Atomiton/Relay → SocketMan, neutral starter data, History panel over history.json |
 | 7 | Windows packaging | ✅ Done* | NSIS + MSI installers, CSP build gate, icons, release build, deployment guide |
+
+### Track 1: UX & Polish (5 phases)
+
+| Phase | Deliverable | Status | Key Changes |
+|-------|-------------|--------|------------|
+| T1P1 | Notifications & keychain feedback | ✅ Done | Toast primitive, env-editor surfaces secretSet/secretDelete failures |
+| T1P2 | Copy, Save, Export | ✅ Done | Dialog plugin + export_write command (IPC: 9→10), copy/save UI, code-gen (curl/fetch/wscat), templates-only exports |
+| T1P3 | Search/filter + virtualization | ✅ Done | Log filter (direction + text search), @tanstack/react-virtual windowing, sticky-to-bottom |
+| T1P4 | Code generation | ✅ Done | lib/codegen/ → curl/fetch/wscat snippets, copy-as-menu dropdown integration |
+| T1P5 | Format fidelity | ✅ Done | js-yaml (JSON_SCHEMA, lossless for JSON objects) + fast-xml-parser, API unchanged |
 
 \* Phase 7 code/build complete; the manual GUI install smoke test on a clean Windows
 session is the one remaining acceptance item (cannot run headlessly). A WebDriver e2e
@@ -305,7 +336,7 @@ reqwest HTTP client — one TLS story, native roots, no native-tls.
 - **No SSE/Socket.IO/MQTT:** WS + HTTP only.
 - **No macOS/Linux:** Windows-first (keyring uses `windows-native`; packaging is NSIS/MSI). Cross-platform deferred.
 - **No custom cert pinning:** per-connection insecure toggle only; pinning deferred.
-- **YAML/XML lossy:** Single-element arrays collapse, numeric strings coerce. JSON is the lossless format.
+- **XML lossy:** Single-element arrays collapse, numeric strings coerce. JSON and YAML are the lossless formats (YAML lossless for JSON-object payloads).
 
 ---
 
@@ -320,9 +351,7 @@ reqwest HTTP client — one TLS story, native roots, no native-tls.
 4. Mirror it in `src/transport/tauri-transport.ts` (real) and `mock-transport.ts` (fallback).
 5. Invoke via `transport` in React hooks.
 
-Current registered commands (`lib.rs`): `history_append`, `http_send`, `secret_delete`,
-`secret_set`, `storage_load`, `storage_save`, `ws_connect`, `ws_disconnect`, `ws_send`.
-`secret_get` is deliberately absent.
+Current registered commands (`lib.rs`, alphabetized, 10 total): `export_write`, `history_append`, `http_send`, `secret_delete`, `secret_set`, `storage_load`, `storage_save`, `ws_connect`, `ws_disconnect`, `ws_send`. `secret_get` is deliberately absent.
 
 ### Testing Workflow
 
