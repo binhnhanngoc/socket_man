@@ -1,6 +1,9 @@
-// Log panes: unified scroll or split sent/received. Ported from
-// design/workspace.jsx (LogStream). Auto-sticks to bottom unless scrolled up.
+// Log panes: unified scroll or split sent/received. Each scroll container is
+// virtualized (@tanstack/react-virtual, dynamic row measurement) so a 10k+ frame
+// log stays smooth with a bounded DOM node count. Sticky-to-bottom is preserved:
+// it follows new frames via the virtualizer unless the user has scrolled up.
 import { useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Format } from "../formats/serialize";
 import type { Frame } from "../transport/transport";
 import { LogRow } from "./log-row";
@@ -13,26 +16,66 @@ interface LogStreamProps {
   fmt: Format;
 }
 
-function useStickyScroll(len: number) {
-  const ref = useRef<HTMLDivElement>(null);
+// One virtualized, sticky-to-bottom scroll column.
+function VirtualLog({ frames, dense, fmt, alt, emptyMsg }: {
+  frames: Frame[];
+  dense: boolean;
+  fmt: Format;
+  alt?: boolean;
+  emptyMsg?: string;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+
+  const virtualizer = useVirtualizer({
+    count: frames.length,
+    getScrollElement: () => parentRef.current,
+    // Collapsed-row estimate; real heights (incl. expanded bodies) are measured
+    // dynamically via measureElement (ResizeObserver) so dense/variable rows align.
+    estimateSize: () => (dense ? 30 : 54),
+    overscan: 14,
+    getItemKey: (i) => frames[i].id,
+  });
+
+  // Auto-follow new frames while pinned to the bottom. Re-implemented against the
+  // virtualizer's total size (the old direct scrollHeight math no longer applies).
   useEffect(() => {
-    const el = ref.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [len]);
+    if (stick.current && frames.length > 0) {
+      virtualizer.scrollToIndex(frames.length - 1, { align: "end" });
+    }
+  }, [frames.length, virtualizer]);
+
   const onScroll = () => {
-    const el = ref.current;
+    const el = parentRef.current;
     if (!el) return;
     stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   };
-  return { ref, onScroll };
+
+  const items = virtualizer.getVirtualItems();
+  return (
+    <div className={"log-scroll" + (alt ? " alt" : "")} ref={parentRef} onScroll={onScroll}>
+      {frames.length === 0 && emptyMsg ? (
+        <div className="empty-sm">{emptyMsg}</div>
+      ) : (
+        <div className="log-virtual" style={{ height: virtualizer.getTotalSize() }}>
+          {items.map((vi) => (
+            <div
+              key={vi.key}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              className="log-virtual-row"
+              style={{ transform: `translateY(${vi.start}px)` }}
+            >
+              <LogRow f={frames[vi.index]} dense={dense} fmt={fmt} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function LogStream({ frames, dense, split, fmt }: LogStreamProps) {
-  const unified = useStickyScroll(frames.length);
-  const sent = useStickyScroll(frames.length);
-  const recv = useStickyScroll(frames.length);
-
   if (split) {
     const out = frames.filter((f) => f.dir === "out");
     const inc = frames.filter((f) => f.dir !== "out");
@@ -42,32 +85,16 @@ export function LogStream({ frames, dense, split, fmt }: LogStreamProps) {
           <div className="log-col-head">
             <IconArrowUp size={13} /> Sent <span>{out.length}</span>
           </div>
-          <div className="log-scroll" ref={sent.ref} onScroll={sent.onScroll}>
-            {out.map((f) => (
-              <LogRow key={f.id} f={f} dense={dense} fmt={fmt} />
-            ))}
-            {out.length === 0 && <div className="empty-sm">No messages sent yet.</div>}
-          </div>
+          <VirtualLog frames={out} dense={dense} fmt={fmt} emptyMsg="No messages sent yet." />
         </div>
         <div className="log-col">
           <div className="log-col-head">
             <IconArrowDown size={13} /> Received <span>{inc.length}</span>
           </div>
-          <div className="log-scroll alt" ref={recv.ref} onScroll={recv.onScroll}>
-            {inc.map((f) => (
-              <LogRow key={f.id} f={f} dense={dense} fmt={fmt} />
-            ))}
-            {inc.length === 0 && <div className="empty-sm">Waiting for server frames…</div>}
-          </div>
+          <VirtualLog frames={inc} dense={dense} fmt={fmt} alt emptyMsg="Waiting for server frames…" />
         </div>
       </div>
     );
   }
-  return (
-    <div className="log-scroll" ref={unified.ref} onScroll={unified.onScroll}>
-      {frames.map((f) => (
-        <LogRow key={f.id} f={f} dense={dense} fmt={fmt} />
-      ))}
-    </div>
-  );
+  return <VirtualLog frames={frames} dense={dense} fmt={fmt} />;
 }

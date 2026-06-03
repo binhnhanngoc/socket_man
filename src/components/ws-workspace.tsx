@@ -5,9 +5,12 @@ import type { ConnMeta, Environment, Item, ConnState } from "../types";
 import type { Format } from "../formats/serialize";
 import { ConnectionBar } from "./connection-bar";
 import { LogStream } from "./log-stream";
+import { LogFilterBar } from "./log-filter-bar";
 import { Composer } from "./composer";
 import { HeadersPane, AuthPane, SettingsPane } from "./ws-tab-panes";
-import { IconBolt, IconPause, IconTrash, IconRadio } from "./icons";
+import { IconBolt, IconPause, IconTrash, IconRadio, IconDownload } from "./icons";
+import { saveFrameLog } from "../lib/export-file";
+import { useLogFilter, applyLogFilter } from "../hooks/use-log-filter";
 
 interface WsWorkspaceProps {
   item: Item;
@@ -32,14 +35,8 @@ interface WsWorkspaceProps {
 }
 
 type Tab = "messages" | "headers" | "auth" | "settings";
-type FilterKind = "all" | "sent" | "recv";
 
 const TABS: Tab[] = ["messages", "headers", "auth", "settings"];
-const FILTERS: [FilterKind, string][] = [
-  ["all", "All"],
-  ["sent", "Sent"],
-  ["recv", "Received"],
-];
 const FORMATS: [Format, string][] = [
   ["json", "JSON"],
   ["yaml", "YAML"],
@@ -51,15 +48,14 @@ export function WsWorkspace(props: WsWorkspaceProps) {
   const { item, conn, paused, onConnect, onDisconnect, onUrl, onSend, onClear, onTogglePause } = props;
   const { draft, setDraft, fmt, onFmt, split, dense, now, env, meta, onMeta } = props;
   const [tab, setTab] = useState<Tab>("messages");
-  const [filter, setFilter] = useState<FilterKind>("all");
+  const filter = useLogFilter();
   const status = conn.status;
   const connected = status === "connected";
   const elapsed = connected && conn.connectedAt ? now - conn.connectedAt : 0;
-  const frames = useMemo(() => {
-    if (filter === "sent") return conn.frames.filter((f) => f.dir === "out");
-    if (filter === "recv") return conn.frames.filter((f) => f.dir !== "out");
-    return conn.frames;
-  }, [conn.frames, filter]);
+  const frames = useMemo(
+    () => applyLogFilter(conn.frames, filter.dirs, filter.text),
+    [conn.frames, filter.dirs, filter.text]
+  );
 
   return (
     <div className="workspace">
@@ -86,13 +82,16 @@ export function WsWorkspace(props: WsWorkspaceProps) {
       {tab === "messages" && (
         <>
           <div className="log-toolbar">
-            <div className="seg">
-              {FILTERS.map(([k, l]) => (
-                <button key={k} className={"seg-btn" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>
-                  {l}
-                </button>
-              ))}
-            </div>
+            <LogFilterBar
+              dirs={filter.dirs}
+              text={filter.text}
+              active={filter.active}
+              count={frames.length}
+              total={conn.frames.length}
+              onToggleDir={filter.toggleDir}
+              onText={filter.setText}
+              onClear={filter.clear}
+            />
             <div className="pane-head-spacer"></div>
             <div className="seg fmt-seg">
               {FORMATS.map(([k, l]) => (
@@ -117,6 +116,14 @@ export function WsWorkspace(props: WsWorkspaceProps) {
             >
               {paused ? <IconBolt size={15} /> : <IconPause size={15} />}
             </button>
+            <button
+              className="icon-btn sm"
+              title="Export visible log…"
+              disabled={frames.length === 0}
+              onClick={() => saveFrameLog(frames)}
+            >
+              <IconDownload size={15} />
+            </button>
             <button className="icon-btn sm" title="Clear log" onClick={onClear}>
               <IconTrash size={15} />
             </button>
@@ -137,7 +144,7 @@ export function WsWorkspace(props: WsWorkspaceProps) {
           )}
         </>
       )}
-      {tab === "headers" && <HeadersPane meta={meta} onChange={onMeta} />}
+      {tab === "headers" && <HeadersPane meta={meta} onChange={onMeta} url={item.url} env={env} />}
       {tab === "auth" && <AuthPane meta={meta} onChange={onMeta} />}
       {tab === "settings" && <SettingsPane meta={meta} onChange={onMeta} />}
 

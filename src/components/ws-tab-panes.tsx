@@ -4,7 +4,12 @@
 // `ConnectConfig.headers` at connect time — the user-driven path for the custom
 // `Authorization` header on the WS upgrade (the project's one hard requirement).
 // Settings stays display-only (Phase 3 binds its hardcoded reliability defaults).
-import type { ConnMeta, HeaderRow } from "../types";
+import type { ConnMeta, Environment, HeaderRow } from "../types";
+import { composeHeaders } from "../hooks/use-workspace-store";
+import { resolveEnv } from "../lib/resolve-env";
+import { generateWs, WS_TARGETS, type WsTarget } from "../lib/codegen";
+import { copyText } from "../lib/export-file";
+import { CopyAsMenu } from "./copy-as-menu";
 import { IconPlus, IconChevron, IconTrash } from "./icons";
 
 const uid = () => "h-" + Math.random().toString(36).slice(2, 9);
@@ -14,16 +19,34 @@ interface PaneProps {
   onChange: (patch: Partial<ConnMeta>) => void;
 }
 
-export function HeadersPane({ meta, onChange }: PaneProps) {
+// HeadersPane also offers "Copy as wscat" — needs the connection URL + active env to
+// build the snippet (skip-secret resolved; secret tokens stay literal).
+interface HeadersPaneProps extends PaneProps {
+  url?: string;
+  env?: Environment | null;
+}
+
+export function HeadersPane({ meta, onChange, url, env }: HeadersPaneProps) {
   const rows = meta.headers;
   const setRow = (id: string, patch: Partial<HeaderRow>) =>
     onChange({ headers: rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
   const addRow = () => onChange({ headers: [...rows, { id: uid(), k: "", v: "" }] });
   const removeRow = (id: string) => onChange({ headers: rows.filter((r) => r.id !== id) });
 
+  const copyAs = (target: WsTarget) => {
+    const cfg = {
+      url: resolveEnv(url ?? "", env ?? null, { skipSecret: true }),
+      headers: composeHeaders(meta, env ?? null),
+    };
+    copyText(generateWs(target, cfg), `Copied as ${target}`);
+  };
+
   return (
     <div className="tab-pane">
-      <div className="lib-section">Connection headers</div>
+      <div className="lib-section pane-row-head">
+        Connection headers
+        {url != null && <CopyAsMenu targets={WS_TARGETS} onPick={copyAs} title="Copy connection as wscat" />}
+      </div>
       <div className="kv-list">
         {rows.length === 0 && <div className="auth-note">No custom headers. Add one to send it on the upgrade request.</div>}
         {rows.map((r) => (
