@@ -17,6 +17,7 @@ import { HttpWorkspace } from "./components/http-workspace";
 import { EnvEditor } from "./components/env-editor";
 import { Resizer } from "./components/resizer";
 import { TweaksPanel } from "./components/tweaks-panel";
+import { ToastHost } from "./components/toast-host";
 import { TweakSection, TweakRadio, TweakToggle, TweakColor } from "./components/tweak-controls";
 
 const ACCENTS = ["#C44D1E", "#3F6B72", "#5D7A3C", "#8B5A3C"];
@@ -157,6 +158,8 @@ export default function App() {
         <TweakToggle label="Dark mode" value={t.dark} onChange={(v) => setTweak("dark", v)} />
         <TweakColor label="Accent" value={t.accent} options={ACCENTS} onChange={(v) => setTweak("accent", v)} />
       </TweaksPanel>
+
+      <ToastHost />
     </div>
   );
 }

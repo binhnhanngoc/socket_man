@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Environment, EnvVar } from "../types";
 import { ENV_COLOR } from "../data/starter-data";
 import { transport } from "../transport";
+import { pushToast } from "../hooks/use-toasts";
 import { IconX, IconCheck, IconLock, IconPlus, IconTrash } from "./icons";
 
 const ENV_SWATCHES = ["leaf", "solar", "pond", "rust", "flare", "clay"];
@@ -46,12 +47,17 @@ export function EnvEditor({ env, isNew, onSave, onDelete, onClose }: EnvEditorPr
     const origSecretKeys = env.vars.filter((v) => v.secret && v.key.trim()).map((v) => v.key);
     const newSecretKeys = new Set(cleaned.filter((v) => v.secret && v.key.trim()).map((v) => v.key));
 
+    // Fail-closed: a keychain error must not abort the save or leak a value. Collect
+    // the affected KEY NAMES (never values) and surface them in one error toast after
+    // the reconcile loops; the var still persists as a ref so resolve errors clearly.
+    const failedKeys: string[] = [];
+
     for (const k of origSecretKeys) {
       if (!newSecretKeys.has(k)) {
         try {
           await transport.secretDelete(env.id, k);
         } catch {
-          // best-effort orphan cleanup
+          failedKeys.push(k);
         }
       }
     }
@@ -61,13 +67,20 @@ export function EnvEditor({ env, isNew, onSave, onDelete, onClose }: EnvEditorPr
         try {
           await transport.secretSet(env.id, v.key.trim(), v.value);
         } catch {
-          // keychain unavailable → the var still saves as a ref; resolve will error clearly
+          failedKeys.push(v.key.trim());
         }
       }
     }
     // Never persist a secret VALUE to disk — store the ref only.
     const persistedVars = cleaned.map((v) => (v.secret ? { ...v, value: "" } : v));
     onSave({ ...env, name: name.trim() || env.name, color, vars: persistedVars });
+
+    if (failedKeys.length) {
+      const keys = [...new Set(failedKeys)].join(", ");
+      pushToast({ kind: "error", message: `Couldn't save secret(s) to keychain: ${keys}` });
+    } else {
+      pushToast({ kind: "success", message: "Environment saved." });
+    }
     onClose();
   };
 
