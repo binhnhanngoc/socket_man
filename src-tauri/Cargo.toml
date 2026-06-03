@@ -41,6 +41,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "c
 # 3.x chosen deliberately for the security keystone). windows-native = Windows
 # Credential Manager; default-features off keeps the Linux secret-service deps out.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+# Native "Save As" dialog (Track 1 export). Only the dialog plugin is added — the
+# file write goes through the explicit `export_write` command (mirrors storage_save),
+# so no fs-plugin scope is granted: the only writable path is the one the user picks.
+tauri-plugin-dialog = "2"
 
 [dev-dependencies]
 # Local TLS echo server for the in-test `wss://` proof (single-task select! on TLS).

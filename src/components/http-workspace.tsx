@@ -8,6 +8,9 @@ import { resolveEnv } from "../lib/resolve-env";
 import { maskSecretTokens } from "../lib/secret-refs";
 import { HttpRequestEditor } from "./http-request-editor";
 import { HttpResponseView } from "./http-response-view";
+import { CopyAsMenu } from "./copy-as-menu";
+import { generateHttp, HTTP_TARGETS, type HttpTarget } from "../lib/codegen";
+import { copyText } from "../lib/export-file";
 import { IconSend, IconGlobe2 } from "./icons";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
@@ -18,6 +21,25 @@ export function HttpWorkspace({ item, env }: { item: Item; env: Environment | nu
   const hasTokens = TOKEN_RE.test(http.url);
   // Preview with skipSecret so a secret token in the URL is never rendered to the DOM.
   const resolved = hasTokens ? maskSecretTokens(resolveEnv(http.url, env, { skipSecret: true }), env) : null;
+
+  // Build the request with skipSecret resolution (non-secret vars expand; secret
+  // tokens stay `{{token}}`) and emit a copy-pastable snippet. Same secret guarantee
+  // as the real send path — codegen only formats, never resolves secrets.
+  const copyAs = (target: HttpTarget) => {
+    const headers: Record<string, string> = {};
+    for (const r of http.headers) {
+      const k = r.k.trim();
+      if (k) headers[k] = resolveEnv(r.v, env, { skipSecret: true });
+    }
+    const hasBody = http.hasBody && http.body.trim() !== "";
+    const req = {
+      method: http.method,
+      url: resolveEnv(http.url, env, { skipSecret: true }),
+      headers,
+      body: hasBody ? resolveEnv(http.body, env, { skipSecret: true }) : undefined,
+    };
+    copyText(generateHttp(target, req), `Copied as ${target}`);
+  };
 
   return (
     <div className="http-ws">
@@ -49,6 +71,7 @@ export function HttpWorkspace({ item, env }: { item: Item; env: Environment | nu
             </div>
           )}
         </div>
+        <CopyAsMenu targets={HTTP_TARGETS} onPick={copyAs} title="Copy request as curl / fetch" />
         <button className="btn btn-rust" onClick={http.send} disabled={http.loading || !http.url.trim()}>
           {http.loading ? "Sending…" : "Send"}
           <IconSend size={15} />

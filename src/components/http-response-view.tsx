@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 import type { HttpResponse } from "../transport/transport";
 import { FormatView } from "../formats/format-view";
 import { parseFmt } from "../formats/serialize";
+import { copyText, saveText, JSON_FILTER, TEXT_FILTER } from "../lib/export-file";
+import { IconCopy, IconDownload } from "./icons";
 
 // 2xx green, 4xx amber, 5xx red — mapped to inline colors so no new CSS is needed.
 function statusColor(status: number): string {
@@ -63,6 +65,19 @@ export function HttpResponseView({ response }: { response: HttpResponse }) {
             Text
           </button>
         </div>
+        <div className="pane-head-spacer"></div>
+        <button className="icon-btn sm" title="Copy body" onClick={() => copyText(response.body)}>
+          <IconCopy size={15} />
+        </button>
+        <button
+          className="icon-btn sm"
+          title="Save body to file…"
+          onClick={() =>
+            saveText(looksJson ? "response.json" : "response.txt", response.body, looksJson ? JSON_FILTER : TEXT_FILTER)
+          }
+        >
+          <IconDownload size={15} />
+        </button>
       </div>
       <FormatView value={showJson ? parsed.value : response.body} fmt={showJson ? "json" : "text"} />
 

@@ -132,6 +132,21 @@ pub fn secret_delete(env_id: String, key: String) -> Result<(), AppError> {
     secrets::delete(&env_id, &key)
 }
 
+// ---- export ----
+
+// Write text to a user-picked path. The path comes from the dialog plugin's
+// `save()` (chosen by the user in JS); this command performs the write so no
+// fs-plugin scope has to be granted — the only writable location is whatever the
+// user just selected. Callers pass TEMPLATE content only (secret tokens stay
+// `{{token}}`); resolved secret values never reach this command. The error carries
+// the IO Display (path/reason) only — never the file contents.
+#[tauri::command]
+pub async fn export_write(path: String, contents: String) -> Result<(), AppError> {
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))
+}
+
 // ---- helpers ----
 
 fn resolve_payload(
