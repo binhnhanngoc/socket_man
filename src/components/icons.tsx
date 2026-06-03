@@ -67,6 +67,7 @@ export const IconCopy = (p: IconProps) => (
   </Ic>
 );
 export const IconTrash = (p: IconProps) => <Ic {...p} d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />;
+export const IconDownload = (p: IconProps) => <Ic {...p} d="M12 3v12M7 10l5 5 5-5M5 21h14" />;
 export const IconSettings = (p: IconProps) => (
   <Ic {...p}>
     <circle cx="12" cy="12" r="3"></circle>
