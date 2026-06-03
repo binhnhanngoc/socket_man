@@ -16,78 +16,84 @@ const SAMPLES: { name: string; body: unknown }[] = [
 ];
 
 // ===========================================================================
-// JSON — the GATED lossless invariant. This MUST pass for every sample, with
-// no exceptions. A green format suite means JSON round-trips exactly.
+// JSON — the GATED lossless invariant. This MUST pass for every sample.
 // ===========================================================================
 describe("JSON round-trip (gated, lossless)", () => {
   for (const s of SAMPLES) {
     it(`losslessly round-trips: ${s.name}`, () => {
-      const out = parseFmt(serialize(s.body, "json"), "json");
-      expect(out).toEqual(s.body);
+      expect(parseFmt(serialize(s.body, "json"), "json")).toEqual(s.body);
     });
   }
 });
 
 // ===========================================================================
-// YAML / XML — view + BEST-EFFORT formats. We test only the documented
-// lossless subset. The hand-rolled parsers have KNOWN, REVIEWED limitations
-// (listed below) — these are asserted as real behavior, NOT hidden as xfail
-// tests that would let a broken gate read "green".
-//
-// KNOWN, REVIEWED LIMITATIONS (do not "fix" silently — JSON is the lossless path).
-// These are documented here as a reviewed list; the ones with deterministic,
-// verified behavior are asserted below, the rest are intentionally NOT asserted
-// (we don't claim a lossy outcome we haven't pinned down — that would be a false
-// green). The supported lossless subset is what the passing tests below cover.
-//
-//   YAML:
-//     - Nested arrays-of-arrays (e.g. [[1,2]]) are NOT handled by the
-//       indentation parser and drop/garble elements. Out of supported subset.
-//     - Externally-authored YAML features (anchors, multi-doc, block scalars,
-//       inline comments) are unsupported — this is a view/best-effort format.
-//   XML (asserted below — deterministic):
-//     - Numeric-looking string text coerces to a number on parse ("007" -> 7).
-//     - Repeated child tags reshape into arrays; null renders as a self-closing
-//       tag and parses back to "".
+// YAML — now backed by js-yaml (JSON schema). Our JSON-object payloads round-trip
+// losslessly, INCLUDING the cases the old hand-rolled parser documented as lossy
+// (single-element arrays, numeric-looking strings, nested arrays-of-arrays). The
+// JSON schema avoids YAML 1.1 coercions (sexagesimal, yes/no→bool).
 // ===========================================================================
-describe("YAML round-trip (documented lossless subset)", () => {
-  const yamlSafe: { name: string; body: unknown }[] = [
-    { name: "flat scalars (multi-key)", body: { action: "config", sampleInterval: 5, unit: "s" } },
-    { name: "multi-element string array", body: { action: "subscribe", fields: ["kwh", "temp_c", "efficiency"] } },
-    { name: "nested object", body: { scenario: "A", shift: { bot: "B-021", window: "02:00-05:00" } } },
-  ];
-  for (const s of yamlSafe) {
-    it(`round-trips within subset: ${s.name}`, () => {
-      const out = parseFmt(serialize(s.body, "yaml"), "yaml");
-      expect(out).toEqual(s.body);
+describe("YAML round-trip (lossless for JSON-object payloads)", () => {
+  for (const s of SAMPLES) {
+    it(`losslessly round-trips: ${s.name}`, () => {
+      expect(parseFmt(serialize(s.body, "yaml"), "yaml")).toEqual(s.body);
     });
   }
 
-  it("single-element string arrays ARE within the lossless subset", () => {
-    // (Sanity: this impl handles { fields: ["only"] } correctly — the lossy
-    // case is nested arrays-of-arrays, which is documented as out-of-subset.)
-    const body = { fields: ["only"] };
-    expect(parseFmt(serialize(body, "yaml"), "yaml")).toEqual(body);
+  // Previously DOCUMENTED-LOSSY cases — now lossless via js-yaml.
+  const nowLossless: { name: string; body: unknown }[] = [
+    { name: "single-element string array", body: { fields: ["only"] } },
+    { name: "nested arrays-of-arrays", body: { grid: [[1, 2], [3, 4]] } },
+    { name: "numeric-looking string (leading zero)", body: { code: "007" } },
+    { name: "numeric-looking string", body: { code: "42" } },
+  ];
+  for (const s of nowLossless) {
+    it(`(was lossy) now round-trips: ${s.name}`, () => {
+      expect(parseFmt(serialize(s.body, "yaml"), "yaml")).toEqual(s.body);
+    });
+  }
+
+  it("rejects malformed YAML by throwing", () => {
+    expect(() => parseFmt("a:\n  - x\n -bad", "yaml")).toThrow();
   });
 });
 
-describe("XML round-trip (documented lossless subset)", () => {
+// ===========================================================================
+// XML — backed by fast-xml-parser. A view + best-effort format: the XML data
+// model has no array concept and no type info, so some shapes are INHERENTLY
+// lossy regardless of parser. The lossless subset is asserted; the inherent
+// losses are documented honestly (not hidden as false-green xfails).
+// ===========================================================================
+describe("XML round-trip (lossless subset + honest inherent losses)", () => {
   const xmlSafe: { name: string; body: unknown }[] = [
     { name: "nested object of strings", body: { scenario: "A", shift: { bot: "B-021", window: "02:00-05:00" } } },
     { name: "multi-key scalars", body: { unit: "s", note: "stable" } },
+    { name: "multi-element string array", body: { fields: ["kwh", "temp_c", "efficiency"] } },
+    { name: "integer scalars", body: { count: 5, zero: 0 } },
+    { name: "booleans", body: { ok: true, retry: false } },
   ];
   for (const s of xmlSafe) {
     it(`round-trips within subset: ${s.name}`, () => {
-      const out = parseFmt(serialize(s.body, "xml"), "xml");
-      expect(out).toEqual(s.body);
+      expect(parseFmt(serialize(s.body, "xml"), "xml")).toEqual(s.body);
     });
   }
 
-  it("documents numeric-string coercion honestly (not lossless)", () => {
-    const body = { code: "007" };
-    const out = parseFmt(serialize(body, "xml"), "xml") as { code: unknown };
-    // KNOWN limitation: "007" parses back as the number 7.
+  it("coerces numeric-looking text to a number (inherent XML limitation)", () => {
+    const out = parseFmt(serialize({ code: "007" }, "xml"), "xml") as { code: unknown };
     expect(out.code).toBe(7);
+  });
+
+  it("renders null as empty text that parses back to '' (inherent XML limitation)", () => {
+    const out = parseFmt(serialize({ cursor: null }, "xml"), "xml") as { cursor: unknown };
+    expect(out.cursor).toBe("");
+  });
+
+  it("collapses a single-element array to a scalar (inherent XML limitation)", () => {
+    const out = parseFmt(serialize({ fields: ["only"] }, "xml"), "xml") as { fields: unknown };
+    expect(out.fields).toBe("only");
+  });
+
+  it("rejects malformed XML by throwing", () => {
+    expect(() => parseFmt("<message><open></message>", "xml")).toThrow();
   });
 });
 
