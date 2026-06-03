@@ -4,6 +4,16 @@ A desktop **WebSocket + HTTP workbench** built with **Tauri 2** — a React/Type
 
 > Status: v0.1.0 — Windows-first. MSI + NSIS installers build green. 57 Rust tests, 38 Vitest tests, plus a WebDriver e2e harness over real WebView2.
 
+## Screenshots
+
+**WebSocket workspace** — live session with custom upgrade headers, a pinned message library, and a streaming frame log (sent / received / system frames with timing and byte sizes).
+
+![SocketMan WebSocket workspace — connected session streaming a live frame log](docs/images/ws-workspace.png)
+
+**HTTP workspace** — strict `reqwest` client with status, timing, byte size, pretty-printed JSON body, and response headers. `{{secret}}` tokens stay literal in the editor and resolve Rust-side at send time.
+
+![SocketMan HTTP workspace — a GET request showing a 200 OK JSON response](docs/images/http-workspace.png)
+
 ## Features
 
 - **Live WebSocket sessions** — `tokio-tungstenite` engine with custom upgrade headers, auto-reconnect (capped exponential backoff + jitter), explicit-pong heartbeat with dead-socket detection + RTT, and instant user-initiated cancel.
